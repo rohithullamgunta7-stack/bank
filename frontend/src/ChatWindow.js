@@ -3901,10 +3901,8 @@ function ChatWindow({ token, onLogout }) {
   const heartbeatIntervalRef = useRef(null);
   const feedbackCheckTimeoutRef = useRef(null);
 
-  // Keep escalationIdRef in sync
   useEffect(() => {
     escalationIdRef.current = escalationId;
-    console.log("Escalation ID updated:", escalationId);
   }, [escalationId]);
 
   useEffect(() => {
@@ -4128,11 +4126,9 @@ function ChatWindow({ token, onLogout }) {
       timestamp: new Date().toISOString() 
     }]);
 
-    // Check if escalation is active using ref (most current value)
     const currentEscalationId = escalationIdRef.current;
     console.log("📤 Sending message, escalation ID:", currentEscalationId);
 
-    // If escalation exists, send via WebSocket and STOP
     if (currentEscalationId) {
       console.log("🔄 Escalation active, sending via WebSocket");
       
@@ -4155,10 +4151,9 @@ function ChatWindow({ token, onLogout }) {
           connectWebSocket(userInfo.user_id);
         }
       }
-      return; // CRITICAL: Stop here, don't call bot API
+      return;
     }
 
-    // No escalation - send to AI bot
     console.log("🤖 No escalation, sending to AI bot");
     setLoading(true);
     
@@ -4173,9 +4168,11 @@ function ChatWindow({ token, onLogout }) {
       });
       
       const data = await res.json();
+      console.log("Bot response:", data);
       
       if (res.ok) {
         if (data.reply === "ORDER_LIST" && data.orders && Array.isArray(data.orders)) {
+          console.log("Displaying order list with", data.orders.length, "orders");
           setMessages(prev => [...prev, { 
             sender: "bot", 
             text: "Here are your recent orders:",
@@ -4189,7 +4186,6 @@ function ChatWindow({ token, onLogout }) {
             timestamp: new Date().toISOString() 
           }]);
 
-          // Check if bot created an escalation
           const escMatch = data.reply.match(/ESC_[a-zA-Z0-9]+/);
           if (escMatch) {
             const newEscalationId = escMatch[0];
