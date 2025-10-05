@@ -24,4 +24,3 @@ export const WS_BASE_URL = isLocal
   : process.env.REACT_APP_WS_URL || "wss://foodhub-support-system-2.onrender.com";
 
 export default API_BASE_URL;
-
