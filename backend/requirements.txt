@@ -1,5 +1,8 @@
-# Add these to your existing requirements.txt or install directly
-pytest==7.4.0
-httpx==0.24.1
-pytest-asyncio==0.21.1
-pytest-mock==3.11.1
+fastapi
+uvicorn
+pymongo[srv]
+google-generativeai
+python-dotenv
+python-jose[cryptography]
+passlib[bcrypt]
+pydantic
