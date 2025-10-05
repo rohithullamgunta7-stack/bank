@@ -671,45 +671,84 @@ def verify_bcrypt_directly(password: str, hashed_pw: str) -> bool:
     Verify bcrypt password directly using bcrypt library.
     Handles 72-byte limitation by preprocessing with SHA256.
     """
+    print(f"🔍 DEBUG: Starting bcrypt verification")
+    print(f"🔍 DEBUG: Password length: {len(password)} chars, {len(password.encode('utf-8'))} bytes")
+    print(f"🔍 DEBUG: Hash prefix: {hashed_pw[:20]}")
+    
+    # Try 1: With SHA256 preprocessing
     try:
-        # Preprocess password with SHA256 to handle length
+        print(f"🔍 DEBUG: Attempt 1 - SHA256 preprocessing")
         password_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
-        
-        # Convert hash string to bytes for bcrypt
         hashed_bytes = hashed_pw.encode('utf-8')
         password_bytes = password_hash.encode('utf-8')
         
-        # Use bcrypt directly
-        return bcrypt_lib.checkpw(password_bytes, hashed_bytes)
+        result = bcrypt_lib.checkpw(password_bytes, hashed_bytes)
+        print(f"🔍 DEBUG: SHA256 method result: {result}")
+        if result:
+            return True
     except Exception as e:
-        print(f"Direct bcrypt verification error: {e}")
-        # Try with original password truncated as last resort
-        try:
-            password_truncated = password.encode('utf-8')[:72]
-            return bcrypt_lib.checkpw(password_truncated, hashed_bytes)
-        except Exception as e2:
-            print(f"Bcrypt truncated verification error: {e2}")
-            return False
+        print(f"❌ DEBUG: SHA256 method failed: {e}")
+    
+    # Try 2: Original password truncated
+    try:
+        print(f"🔍 DEBUG: Attempt 2 - Original password truncated to 72 bytes")
+        password_truncated = password.encode('utf-8')[:72]
+        hashed_bytes = hashed_pw.encode('utf-8')
+        
+        result = bcrypt_lib.checkpw(password_truncated, hashed_bytes)
+        print(f"🔍 DEBUG: Truncated method result: {result}")
+        if result:
+            return True
+    except Exception as e:
+        print(f"❌ DEBUG: Truncated method failed: {e}")
+    
+    # Try 3: Original password as-is (might work if under 72 bytes)
+    try:
+        print(f"🔍 DEBUG: Attempt 3 - Original password as-is")
+        password_bytes = password.encode('utf-8')
+        hashed_bytes = hashed_pw.encode('utf-8')
+        
+        result = bcrypt_lib.checkpw(password_bytes, hashed_bytes)
+        print(f"🔍 DEBUG: Original method result: {result}")
+        return result
+    except Exception as e:
+        print(f"❌ DEBUG: Original method failed: {e}")
+    
+    print(f"❌ DEBUG: ALL verification methods failed")
+    return False
 
 def verify_password(password: str, hashed_pw: str) -> bool:
     """
     Verify password against hash.
     First tries argon2, then falls back to bcrypt for legacy passwords.
     """
+    print(f"\n{'='*60}")
+    print(f"🔐 PASSWORD VERIFICATION STARTED")
+    print(f"{'='*60}")
+    print(f"📊 Hash type: {hashed_pw[:10]}...")
+    
     # Try Argon2 first (new hashes)
     if hashed_pw.startswith("$argon2"):
+        print(f"✅ Detected Argon2 hash")
         try:
-            return pwd_context.verify(password, hashed_pw)
+            result = pwd_context.verify(password, hashed_pw)
+            print(f"✅ Argon2 verification result: {result}")
+            return result
         except Exception as e:
-            print(f"Argon2 verification error: {e}")
+            print(f"❌ Argon2 verification error: {e}")
             return False
     
     # Try bcrypt for legacy passwords using direct bcrypt library
     if hashed_pw.startswith("$2a$") or hashed_pw.startswith("$2b$") or hashed_pw.startswith("$2y$"):
-        return verify_bcrypt_directly(password, hashed_pw)
+        print(f"✅ Detected bcrypt hash (legacy)")
+        result = verify_bcrypt_directly(password, hashed_pw)
+        print(f"🏁 Final bcrypt verification result: {result}")
+        print(f"{'='*60}\n")
+        return result
     
     # Unknown hash format
-    print(f"Unknown hash format: {hashed_pw[:10]}...")
+    print(f"❌ Unknown hash format: {hashed_pw[:10]}...")
+    print(f"{'='*60}\n")
     return False
 
 def needs_rehash(hashed_pw: str) -> bool:
@@ -875,29 +914,49 @@ def admin_signup(user: AdminSignup):
 @router.post("/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
     """Login endpoint with rate limiting and automatic password rehashing"""
+    print(f"\n{'#'*60}")
+    print(f"🚀 LOGIN ATTEMPT STARTED")
+    print(f"{'#'*60}")
+    
     if not mongo_connected:
+        print(f"❌ Database not connected")
         raise HTTPException(status_code=503, detail="Database unavailable. Please try again later.")
     
     email = sanitize_email(form_data.username)
+    print(f"📧 Email: {email}")
+    
     allowed, error_msg = check_rate_limit(email, login_attempts)
     if not allowed:
+        print(f"🚫 Rate limit exceeded")
         raise HTTPException(status_code=429, detail=error_msg)
     
     db_user = users_collection.find_one({"email": email})
     if not db_user:
+        print(f"❌ User not found in database")
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
+    print(f"✅ User found in database")
+    print(f"📝 User role: {db_user.get('role', 'N/A')}")
+    print(f"🔑 Stored hash type: {db_user['password'][:20]}...")
+    
     # Verify password
+    print(f"🔐 Starting password verification...")
     password_valid = verify_password(form_data.password, db_user["password"])
+    
     if not password_valid:
+        print(f"❌ PASSWORD VERIFICATION FAILED")
+        print(f"{'#'*60}\n")
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    print(f"✅ PASSWORD VERIFICATION SUCCESSFUL!")
     
     updates = {}
     
     # Automatic migration: rehash bcrypt passwords to argon2 on successful login
     if needs_rehash(db_user["password"]):
-        print(f"Migrating password to Argon2 for user: {email}")
+        print(f"🔄 Migrating password to Argon2 for user: {email}")
         updates["password"] = hash_password(form_data.password)
+        print(f"✅ Password migration complete")
     
     if "user_id" not in db_user:
         updates["user_id"] = f"user_{int(datetime.utcnow().timestamp())}"
@@ -910,6 +969,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
     updates["last_login"] = datetime.utcnow().isoformat()
     
     if updates:
+        print(f"💾 Updating user record with {len(updates)} fields")
         users_collection.update_one({"email": email}, {"$set": updates})
     
     token = create_access_token({
@@ -917,6 +977,10 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
         "name": db_user["name"],
         "role": db_user["role"]
     })
+    
+    print(f"🎫 Token generated successfully")
+    print(f"✅ LOGIN SUCCESSFUL")
+    print(f"{'#'*60}\n")
     
     return {"access_token": token, "token_type": "bearer"}
 
