@@ -642,6 +642,7 @@ from passlib.context import CryptContext
 from datetime import datetime, timedelta
 from collections import defaultdict
 from typing import Optional
+import hashlib
 from .models import UserSignup, AdminSignup, Token, UserInfo, RoleUpdateRequest
 from .config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, ADMIN_SECRET_KEY
 from .database import users_collection, messages_collection, mongo_connected
@@ -649,11 +650,12 @@ from .database import users_collection, messages_collection, mongo_connected
 router = APIRouter()
 
 # Support BOTH bcrypt and argon2 for migration
-# Argon2 is preferred for new passwords, but bcrypt hashes can still be verified
+# Use SHA256 preprocessing for bcrypt to handle long passwords
 pwd_context = CryptContext(
     schemes=["argon2", "bcrypt"],
     deprecated="auto",
-    argon2__rounds=4  # Adjust rounds as needed for performance
+    argon2__rounds=4,
+    bcrypt__ident="2b"  # Use bcrypt 2b variant
 )
 
 # Rate limiting storage (in production, use Redis)
@@ -662,24 +664,59 @@ signup_attempts = defaultdict(list)
 
 # ---------------- Password Utilities ---------------- #
 
+def preprocess_password(password: str) -> str:
+    """
+    Preprocess password to handle bcrypt's 72-byte limitation.
+    Use SHA256 for passwords that might exceed 72 bytes.
+    """
+    # Convert to bytes to check actual byte length
+    password_bytes = password.encode('utf-8')
+    
+    # If password is longer than 72 bytes, hash it first
+    if len(password_bytes) > 72:
+        return hashlib.sha256(password_bytes).hexdigest()
+    
+    return password
+
 def hash_password(password: str) -> str:
     """Hash password using Argon2 (new default)"""
+    # No preprocessing needed for argon2 - it doesn't have the 72-byte limit
     return pwd_context.hash(password)
 
 def verify_password(password: str, hashed_pw: str) -> bool:
     """
     Verify password against hash.
     Supports both bcrypt (legacy) and argon2 (new) hashes.
+    Handles bcrypt's 72-byte limitation for legacy passwords.
     """
     try:
-        return pwd_context.verify(password, hashed_pw)
+        # First try with original password (for argon2 hashes)
+        if pwd_context.verify(password, hashed_pw):
+            return True
+    except ValueError as e:
+        # If it's a "password too long" error, try with preprocessed password
+        if "cannot be longer than 72 bytes" in str(e):
+            try:
+                preprocessed = preprocess_password(password)
+                return pwd_context.verify(preprocessed, hashed_pw)
+            except Exception as e2:
+                print(f"Password verification error after preprocessing: {e2}")
+                return False
+        print(f"Password verification error: {e}")
+        return False
     except Exception as e:
         print(f"Password verification error: {e}")
         return False
+    
+    return False
 
 def needs_rehash(hashed_pw: str) -> bool:
     """Check if password needs to be rehashed (e.g., bcrypt -> argon2)"""
-    return pwd_context.needs_update(hashed_pw)
+    try:
+        return pwd_context.needs_update(hashed_pw)
+    except Exception:
+        # If we can't determine, assume it needs rehashing
+        return True
 
 # ---------------- JWT Utilities ---------------- #
 
@@ -848,7 +885,12 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
         raise HTTPException(status_code=429, detail=error_msg)
     
     db_user = users_collection.find_one({"email": email})
-    if not db_user or not verify_password(form_data.password, db_user["password"]):
+    if not db_user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Verify password
+    password_valid = verify_password(form_data.password, db_user["password"])
+    if not password_valid:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
     updates = {}
