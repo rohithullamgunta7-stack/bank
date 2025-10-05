@@ -5,9 +5,9 @@ from passlib.context import CryptContext
 from datetime import datetime, timedelta
 from collections import defaultdict
 from typing import Optional
-from models import UserSignup, AdminSignup, Token, UserInfo, RoleUpdateRequest
-from config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, ADMIN_SECRET_KEY
-from database import users_collection, messages_collection, mongo_connected
+from .models import UserSignup, AdminSignup, Token, UserInfo, RoleUpdateRequest
+from .config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, ADMIN_SECRET_KEY
+from .database import users_collection, messages_collection, mongo_connected
 
 router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

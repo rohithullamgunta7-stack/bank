@@ -1,10 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
-from models import FAQCreate, FAQUpdate, FAQResponse, FAQSearchQuery, FAQFeedback
-from auth import get_current_user, require_admin, require_support_or_admin
-from config import db, mongo_connected, model
-from database import messages_collection
+from .models import FAQCreate, FAQUpdate, FAQResponse, FAQSearchQuery, FAQFeedback
+from .auth import get_current_user, require_admin, require_support_or_admin
+from .config import db, mongo_connected, model
+from .database import messages_collection
 import json
 import re
 

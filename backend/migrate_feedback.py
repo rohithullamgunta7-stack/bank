@@ -1,4 +1,4 @@
-from config import db, mongo_connected
+from .config import db, mongo_connected
 from datetime import datetime, timezone
 
 def migrate_feedback_schema():

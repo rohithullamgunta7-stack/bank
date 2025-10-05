@@ -1,9 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict
-from auth import require_admin
-from config import db, mongo_connected, model
-from database import messages_collection
+from .auth import require_admin
+from .config import db, mongo_connected, model
+from .database import messages_collection
 import json
 import re
 
@@ -20,7 +20,7 @@ def extract_successful_conversations(days: int = 30) -> List[Dict]:
     try:
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         
-        from config import db
+        from .config import db
         feedback_collection = db["feedback"]
         
         positive_feedbacks = list(feedback_collection.find({
@@ -363,7 +363,7 @@ async def analyze_faq_gaps(admin_user: dict = Depends(require_admin)):
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
         
         # Get escalated conversations
-        from config import db
+        from .config import db
         escalations_collection = db["escalations"]
         feedback_collection = db["feedback"]
         

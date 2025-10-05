@@ -2,19 +2,19 @@
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from models import MessageRequest, MessageResponse
-from chat import get_bot_reply
-from database import (
+from .models import MessageRequest, MessageResponse
+from .chat import get_bot_reply
+from .database import (
     get_or_create_user, get_user_conversations, get_all_users, 
     get_conversation_summaries, get_user_conversation_history, 
     messages_collection
 )
-from config import orders_col, refunds_col, mongo_connected, gemini_initialized
-from auth import router as auth_router, get_current_user, require_admin, require_support_or_admin
-from escalation import router as escalation_router
-from faq import router as faq_router
-from faq_learning import router as faq_learning_router
-from feedback import router as feedback_router
+from .config import orders_col, refunds_col, mongo_connected, gemini_initialized
+from .auth import router as auth_router, get_current_user, require_admin, require_support_or_admin
+from .escalation import router as escalation_router
+from .faq import router as faq_router
+from .faq_learning import router as faq_learning_router
+from .feedback import router as feedback_router
 import time
 from datetime import datetime, timedelta
 
@@ -99,7 +99,7 @@ def chat_endpoint(req: MessageRequest, current_user: dict = Depends(get_current_
         )
         
         if reply == "ORDER_LIST":
-            from chat import get_order_list
+            from .chat import get_order_list
             orders_data, _ = get_order_list(user["user_id"])
             
             return {

@@ -1,5 +1,5 @@
 
-from config import users_collection, messages_collection, mongo_connected
+from .config import users_collection, messages_collection, mongo_connected
 from datetime import datetime, timezone, timedelta
 
 def get_or_create_user(email, name=None, role="user"):
@@ -92,7 +92,7 @@ def save_message(user_id, user_msg, bot_msg, agent_id=None, escalation_id=None):
         messages_collection.insert_one(message_doc)
 
         try:
-            from chat import invalidate_cache
+            from .chat import invalidate_cache
             invalidate_cache(user_id)
         except ImportError:
             pass

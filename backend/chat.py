@@ -1,10 +1,10 @@
 
 import time
 from datetime import datetime, timezone, timedelta
-from database import load_chat_history, save_message, get_user_by_id, messages_collection
-from config import orders_col, refunds_col, db, model
-from escalation import should_escalate, create_escalation
-from faq_context import get_faq_context
+from .database import load_chat_history, save_message, get_user_by_id, messages_collection
+from .config import orders_col, refunds_col, db, model
+from .escalation import should_escalate, create_escalation
+from .faq_context import get_faq_context
 import re
 
 # In-memory session cache
@@ -620,7 +620,7 @@ Keep response under 4 sentences."""
     # FAQ HANDLING - Dynamic, no hardcoding
     elif intent.startswith("FAQ_"):
         try:
-            from faq_context import find_best_faq_match
+            from .faq_context import find_best_faq_match
             
             faq_match = find_best_faq_match(user_msg, intent)
             

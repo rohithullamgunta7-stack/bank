@@ -1,10 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
-from database import messages_collection, users_collection
-from config import orders_col, refunds_col
-from auth import get_current_user, require_support_or_admin
-from models import EscalationRequest
+from .database import messages_collection, users_collection
+from .config import orders_col, refunds_col
+from .auth import get_current_user, require_support_or_admin
+from .models import EscalationRequest
 from bson import ObjectId
 import json
 import asyncio
@@ -105,7 +105,7 @@ async def assign_escalation_to_agent(escalation_id: str, agent_id: str) -> bool:
         active_escalations[escalation_id]["status"] = "assigned"
         active_escalations[escalation_id]["assigned_at"] = datetime.now(timezone.utc).isoformat()
 
-        from config import db
+        from .config import db
         if db is not None:
             db["escalations"].update_one(
                 {"escalation_id": escalation_id},
@@ -141,7 +141,7 @@ def create_escalation(user_id: str, reason: str, context: dict) -> str:
         }
         active_escalations[escalation_id] = escalation
 
-        from config import db
+        from .config import db
         if db is not None:
             db["escalations"].insert_one(escalation.copy())
 
@@ -236,7 +236,7 @@ async def get_my_escalations(current_user: dict = Depends(get_current_user)):
             if esc.get("user_id") == user.get("user_id"):
                 user_escalations.append(convert_objectid(esc))
         
-        from config import db
+        from .config import db
         if db is not None:
             try:
                 db_escalations = list(db["escalations"].find({"user_id": user.get("user_id")}))
@@ -256,7 +256,7 @@ async def get_my_escalations(current_user: dict = Depends(get_current_user)):
 @router.get("/escalations/pending")
 async def get_pending_escalations(current_user: dict = Depends(require_support_or_admin)):
     try:
-        from config import db
+        from .config import db
         escalations = []
         
         for esc in active_escalations.values():
@@ -287,7 +287,7 @@ async def get_assigned_escalations(current_user: dict = Depends(require_support_
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        from config import db
+        from .config import db
         escalations = []
         
         for esc in active_escalations.values():
@@ -320,7 +320,7 @@ async def claim_escalation(escalation_id: str, current_user: dict = Depends(requ
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
-        from config import db
+        from .config import db
         
         escalation = None
         if escalation_id in active_escalations:
@@ -383,7 +383,7 @@ async def resolve_escalation(
     current_user: dict = Depends(require_support_or_admin)
 ):
     try:
-        from config import db
+        from .config import db
         
         if escalation_id in active_escalations:
             active_escalations[escalation_id]["status"] = "resolved"
@@ -438,7 +438,7 @@ async def agent_websocket(websocket: WebSocket, agent_id: str):
                 message = data.get("message")
                 
                 if escalation_id not in active_escalations:
-                    from config import db
+                    from .config import db
                     if db is not None:
                         escalation = db["escalations"].find_one({"escalation_id": escalation_id})
                         if escalation:
@@ -543,7 +543,7 @@ async def user_websocket(websocket: WebSocket, user_id: str):
                 message = data.get("message")
                 
                 if escalation_id not in active_escalations:
-                    from config import db
+                    from .config import db
                     if db is not None:
                         escalation = db["escalations"].find_one({"escalation_id": escalation_id})
                         if escalation:

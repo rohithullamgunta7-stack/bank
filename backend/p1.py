@@ -3,7 +3,7 @@ Run this script to add sample food delivery orders and refunds to MongoDB
 Usage: python seed_data.py
 """
 
-from config import orders_col, refunds_col, mongo_connected
+from .config import orders_col, refunds_col, mongo_connected
 from datetime import datetime, timedelta
 import random
 import uuid

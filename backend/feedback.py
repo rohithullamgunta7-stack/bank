@@ -3,10 +3,10 @@
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from models import FeedbackSubmission, FeedbackResponse, FeedbackAnalytics
-from auth import get_current_user, require_admin, require_support_or_admin
-from config import db, mongo_connected, model
-from database import get_user_by_email, messages_collection
+from .models import FeedbackSubmission, FeedbackResponse, FeedbackAnalytics
+from .auth import get_current_user, require_admin, require_support_or_admin
+from .config import db, mongo_connected, model
+from .database import get_user_by_email, messages_collection
 import json
 import re
 
@@ -482,7 +482,7 @@ def get_agent_performance(
         raise HTTPException(status_code=503, detail="Database unavailable")
     
     try:
-        from database import get_users_by_role
+        from .database import get_users_by_role
         
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         agents = get_users_by_role("customer_support_agent")
@@ -498,7 +498,7 @@ def get_agent_performance(
             relevant_feedback = []
             for fb in agent_feedback:
                 if fb.get("escalation_id"):
-                    from config import db
+                    from .config import db
                     if db is not None:
                         escalation = db["escalations"].find_one({"escalation_id": fb["escalation_id"]})
                         if escalation and escalation.get("assigned_agent_id") == agent["user_id"]:

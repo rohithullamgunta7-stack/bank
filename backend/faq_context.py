@@ -1,5 +1,5 @@
 
-from config import db, mongo_connected
+from .config import db, mongo_connected
 
 def get_faq_context():
     """Return FAQ context dynamically from database"""
