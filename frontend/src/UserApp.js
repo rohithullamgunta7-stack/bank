@@ -302,7 +302,7 @@
 
 import React, { useState, useEffect } from "react";
 import ChatWindow from "./ChatWindow";
-import API_BASE_URL from "../config"; // ✅ import your backend URL config
+import API_BASE_URL from "./config"; // ✅ import your backend URL config
 import "./auth-styles.css";
 
 function UserApp() {
