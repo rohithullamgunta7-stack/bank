@@ -3909,19 +3909,43 @@ function ChatWindow({ token, onLogout }) {
     fetchUserInfo();
     checkForExistingEscalation();
     return () => {
-      if (wsRef.current) wsRef.current.close();
       if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
       if (feedbackCheckTimeoutRef.current) clearTimeout(feedbackCheckTimeoutRef.current);
+      if (wsRef.current) wsRef.current.close();
     };
   }, [token]);
 
   useEffect(() => scrollToBottom(), [messages]);
 
   useEffect(() => {
-    if (userInfo?.user_id && !wsRef.current) {
+    if (userInfo?.user_id && !wsConnected && !wsRef.current) {
       connectWebSocket(userInfo.user_id);
     }
   }, [userInfo]);
+
+  useEffect(() => {
+    if (messages.length > 0 && !escalationId && !feedbackSubmitted && !isLoggingOut) {
+      const lastMsg = messages[messages.length - 1];
+      if (lastMsg.sender === "bot") {
+        const botText = lastMsg.text.toLowerCase();
+        const goodbyePatterns = [
+          "welcome", "have a great day", "have a good day", 
+          "glad to help", "happy to help", "pleasure helping",
+          "if you need anything", "feel free to reach out"
+        ];
+        const isGoodbyeMessage = goodbyePatterns.some(pattern => botText.includes(pattern));
+        if (isGoodbyeMessage) {
+          if (feedbackCheckTimeoutRef.current) clearTimeout(feedbackCheckTimeoutRef.current);
+          feedbackCheckTimeoutRef.current = setTimeout(() => {
+            checkFeedbackPrompt();
+          }, 2000);
+        }
+      }
+    }
+    return () => {
+      if (feedbackCheckTimeoutRef.current) clearTimeout(feedbackCheckTimeoutRef.current);
+    };
+  }, [messages, escalationId, feedbackSubmitted, isLoggingOut]);
 
   const fetchUserInfo = async () => {
     try {
@@ -3931,7 +3955,6 @@ function ChatWindow({ token, onLogout }) {
       if (response.ok) {
         const data = await response.json();
         setUserInfo(data);
-        console.log("User info loaded:", data);
       }
     } catch (error) {
       console.error("Error fetching user info:", error);
@@ -3949,7 +3972,6 @@ function ChatWindow({ token, onLogout }) {
           esc => esc.status !== 'resolved' && esc.status !== 'closed'
         );
         if (activeEscalation) {
-          console.log("Found active escalation:", activeEscalation.escalation_id);
           setEscalationId(activeEscalation.escalation_id);
           escalationIdRef.current = activeEscalation.escalation_id;
           await loadEscalationHistory(activeEscalation.escalation_id);
@@ -3985,20 +4007,80 @@ function ChatWindow({ token, onLogout }) {
     }
   };
 
-  const connectWebSocket = (userId) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      console.log("WebSocket already connected");
+  const checkFeedbackPrompt = async () => {
+    if (!userInfo?.user_id || feedbackSubmitted || escalationId || isLoggingOut) return;
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/feedback/check-prompt/${userInfo.user_id}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        if (data.should_ask && data.session_id && !isLoggingOut) {
+          setCurrentSessionId(data.session_id);
+          setShowFeedbackModal(true);
+        }
+      }
+    } catch (error) {
+      console.error("Error checking feedback prompt:", error);
+    }
+  };
+
+  const handleFeedbackSubmit = async (feedbackData) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/feedback/submit`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(feedbackData)
+      });
+      if (response.ok) {
+        setShowFeedbackModal(false);
+        setFeedbackSubmitted(true);
+        setMessages(prev => [...prev, {
+          sender: "system",
+          text: "Thank you for your feedback!",
+          timestamp: new Date().toISOString()
+        }]);
+      } else {
+        alert("Failed to submit feedback.");
+      }
+    } catch (error) {
+      alert("Connection error.");
+    }
+  };
+
+  const handleFeedbackClose = () => {
+    setShowFeedbackModal(false);
+    if (isLoggingOut) proceedWithLogout();
+  };
+
+  const handleLogoutClick = () => {
+    if (showFeedbackModal) {
+      setIsLoggingOut(true);
+      setShowFeedbackModal(false);
       return;
     }
+    proceedWithLogout();
+  };
 
-    const wsUrl = `${WS_BASE_URL}/escalation/ws/user/${userId}`;
-    console.log("Connecting user WebSocket to:", wsUrl);
-    const ws = new WebSocket(wsUrl);
+  const proceedWithLogout = () => {
+    if (feedbackCheckTimeoutRef.current) clearTimeout(feedbackCheckTimeoutRef.current);
+    if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
+    if (wsRef.current) wsRef.current.close();
+    if (onLogout) onLogout();
+  };
+
+  const connectWebSocket = (userId) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
+    if (wsRef.current) wsRef.current.close();
+
+    const ws = new WebSocket(`${WS_BASE_URL}/escalation/ws/user/${userId}`);
 
     ws.onopen = () => {
       setWsConnected(true);
-      console.log("✅ User WebSocket connected");
-      
       if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
       heartbeatIntervalRef.current = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
@@ -4010,15 +4092,11 @@ function ChatWindow({ token, onLogout }) {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.log("WebSocket message received:", data);
-        
         if (data.type === 'ping') {
           ws.send(JSON.stringify({ type: 'pong' }));
           return;
         }
-        
         if (data.type === 'agent_message') {
-          console.log("📨 Agent message received:", data.message);
           setMessages(prev => [...prev, {
             sender: "bot",
             text: data.message,
@@ -4037,24 +4115,18 @@ function ChatWindow({ token, onLogout }) {
       }
     };
 
+    ws.onerror = () => setWsConnected(false);
+
     ws.onclose = (event) => {
       setWsConnected(false);
       wsRef.current = null;
-      console.log("❌ User WebSocket closed, code:", event.code);
-      
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current);
         heartbeatIntervalRef.current = null;
       }
-      
-      if (event.code !== 1000 && !isLoggingOut) {
-        console.log("🔄 Reconnecting in 5 seconds...");
-        setTimeout(() => connectWebSocket(userId), 5000);
+      if (event.code !== 1000 && userInfo?.user_id && !isLoggingOut) {
+        setTimeout(() => connectWebSocket(userInfo.user_id), 3000);
       }
-    };
-
-    ws.onerror = (error) => {
-      console.error("❌ User WebSocket error:", error);
     };
 
     wsRef.current = ws;
@@ -4062,25 +4134,19 @@ function ChatWindow({ token, onLogout }) {
 
   const handleEscalationCreated = (escId) => {
     if (escalationIdRef.current) {
-      console.warn("Already have active escalation:", escalationIdRef.current);
+      alert("You already have an active support session.");
       return;
     }
-    
-    console.log("✅ New escalation created:", escId);
     setEscalationId(escId);
     escalationIdRef.current = escId;
-    
-    if (userInfo?.user_id && !wsConnected) {
-      connectWebSocket(userInfo.user_id);
-    }
-    
+    if (userInfo?.user_id && !wsConnected) connectWebSocket(userInfo.user_id);
     setMessages(prev => [...prev, {
       sender: "system",
       text: "You've been connected to a live support agent. They will assist you shortly.",
       timestamp: new Date().toISOString()
     }]);
   };
-  
+
   const handleOrderClick = async (orderId) => {
     setMessages(prev => [...prev, { 
       sender: "user", 
@@ -4119,7 +4185,6 @@ function ChatWindow({ token, onLogout }) {
 
     const userMessage = input.trim();
     setInput("");
-    
     setMessages(prev => [...prev, { 
       sender: "user", 
       text: userMessage, 
@@ -4127,36 +4192,26 @@ function ChatWindow({ token, onLogout }) {
     }]);
 
     const currentEscalationId = escalationIdRef.current;
-    console.log("📤 Sending message, escalation ID:", currentEscalationId);
 
     if (currentEscalationId) {
-      console.log("🔄 Escalation active, sending via WebSocket");
-      
       if (wsConnected && wsRef.current?.readyState === WebSocket.OPEN) {
-        console.log("✅ WebSocket ready, sending message");
         wsRef.current.send(JSON.stringify({ 
           type: "message", 
           escalation_id: currentEscalationId, 
           message: userMessage 
         }));
       } else {
-        console.log("⚠️ WebSocket not ready, attempting reconnection");
+        if (userInfo?.user_id) connectWebSocket(userInfo.user_id);
         setMessages(prev => [...prev, {
-          sender: "system", 
-          text: "Reconnecting to support agent...", 
+          sender: "system",
+          text: "Connecting to support agent...",
           timestamp: new Date().toISOString()
         }]);
-        
-        if (userInfo?.user_id) {
-          connectWebSocket(userInfo.user_id);
-        }
       }
       return;
     }
 
-    console.log("🤖 No escalation, sending to AI bot");
     setLoading(true);
-    
     try {
       const res = await fetch(`${API_BASE_URL}/chat`, {
         method: "POST",
@@ -4167,12 +4222,12 @@ function ChatWindow({ token, onLogout }) {
         body: JSON.stringify({ message: userMessage }),
       });
       
-      const data = await res.json();
-      console.log("Bot response:", data);
-      
       if (res.ok) {
+        const data = await res.json();
+        console.log("Full API response:", data);
+        
         if (data.reply === "ORDER_LIST" && data.orders && Array.isArray(data.orders)) {
-          console.log("Displaying order list with", data.orders.length, "orders");
+          console.log("Displaying orders:", data.orders);
           setMessages(prev => [...prev, { 
             sender: "bot", 
             text: "Here are your recent orders:",
@@ -4186,32 +4241,44 @@ function ChatWindow({ token, onLogout }) {
             timestamp: new Date().toISOString() 
           }]);
 
-          const escMatch = data.reply.match(/ESC_[a-zA-Z0-9]+/);
+          const escMatch = data.reply.match(/ESC_\d+/);
           if (escMatch) {
-            const newEscalationId = escMatch[0];
-            console.log("🆕 Bot created escalation:", newEscalationId);
-            handleEscalationCreated(newEscalationId);
+            const foundEscId = escMatch[0];
+            setEscalationId(foundEscId);
+            escalationIdRef.current = foundEscId;
+            if (userInfo?.user_id && (!wsConnected || wsRef.current.readyState !== WebSocket.OPEN)) {
+              connectWebSocket(userInfo.user_id);
+            }
+            setMessages(prev => [...prev, {
+              sender: "system",
+              text: "You are now connected to live support.",
+              timestamp: new Date().toISOString()
+            }]);
           }
         }
       } else {
         setMessages(prev => [...prev, { 
           sender: "bot", 
-          text: data.detail || "Sorry, an error occurred.", 
+          text: "Sorry, an error occurred. Please try again.", 
           timestamp: new Date().toISOString() 
         }]);
       }
     } catch (error) {
-      console.error("Error sending message:", error);
+      console.error("Send message error:", error);
       setMessages(prev => [...prev, { 
         sender: "bot", 
-        text: "Connection error. Please try again.", 
+        text: "Connection error. Check your internet.", 
         timestamp: new Date().toISOString() 
       }]);
     } finally {
       setLoading(false);
     }
   };
-  
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
   const getStatusColor = (status) => {
     const s = status.toLowerCase();
     if (s.includes('delivered')) return '#4caf50';
@@ -4230,11 +4297,7 @@ function ChatWindow({ token, onLogout }) {
     if (s.includes('cancelled')) return '✗';
     return '📦';
   };
-  
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-  
+
   return (
     <div style={styles.container}>
       <div style={styles.header}>
@@ -4395,7 +4458,7 @@ function ChatWindow({ token, onLogout }) {
           disabled={loading || !input.trim() || (escalationId && !wsConnected)} 
           style={{
             ...styles.sendButton,
-            ...((loading || !input.trim() || (escalationId && !wsConnected)) 
+            ...(loading || !input.trim() || (escalationId && !wsConnected) 
               ? styles.sendButtonDisabled 
               : {})
           }}
@@ -4406,8 +4469,8 @@ function ChatWindow({ token, onLogout }) {
 
       <FeedbackModal
         show={showFeedbackModal}
-        onClose={() => setShowFeedbackModal(false)}
-        onSubmit={() => {}}
+        onClose={handleFeedbackClose}
+        onSubmit={handleFeedbackSubmit}
         sessionId={currentSessionId}
       />
     </div>
@@ -4518,6 +4581,7 @@ const styles = {
     wordWrap: "break-word", 
     lineHeight: "1.6",
     fontSize: "0.95rem",
+    minWidth: "300px"
   },
   userMessage: { 
     backgroundColor: "#667eea", 
@@ -4555,8 +4619,7 @@ const styles = {
   timestamp: { 
     fontSize: "0.7rem", 
     color: "#999", 
-    marginTop: "6px",
-    textAlign: "right"
+    marginTop: "6px" 
   },
   loadingMessage: { 
     backgroundColor: "white", 
