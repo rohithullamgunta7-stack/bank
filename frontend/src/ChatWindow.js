@@ -5075,7 +5075,6 @@ function ChatWindow({ token, onLogout }) {
           timestamp: new Date().toISOString()
         }]);
       }
-      // CRITICAL FIX: Stop the function here so it doesn't also send to the bot.
       return;
     }
 
