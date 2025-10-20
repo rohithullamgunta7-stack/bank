@@ -393,6 +393,7 @@ function UserApp() {
           const errors = data.detail
             .map((err) => {
               const field = err.loc ? err.loc[err.loc.length - 1] : "input";
+              // ✅ FIX: Used backticks for template literal
               return ${field}: ${err.msg || "Invalid input"};
             })
             .join(", ");
@@ -419,30 +420,26 @@ function UserApp() {
     setIsLoading(true);
 
     try {
-      // --- START OF FIX ---
-      // Create the form data body correctly
       const formData = new URLSearchParams();
       formData.append('username', email);
       formData.append('password', password);
-      // --- END OF FIX ---
 
+      // ✅ FIX: Used backticks for template literal
       const res = await fetch(${API_BASE_URL}/auth/login, {
         method: "POST",
         headers: {
-          "Content-Type": "application/x-www-form-urlencoded", // Keep this header
+          "Content-Type": "application/x-www-form-urlencoded",
         },
-        body: formData.toString(), // Send the URLSearchParams object converted to a string
+        body: formData.toString(),
       });
 
-      // --- Error Handling Improvement ---
       if (!res.ok) {
-        // Try to parse error detail even if it's not JSON (though FastAPI usually sends JSON)
+        // ✅ FIX: Used backticks for template literal
         let errorDetail = Login failed with status: ${res.status};
         try {
           const errorData = await res.json();
           errorDetail = errorData.detail || JSON.stringify(errorData);
         } catch (jsonError) {
-          // If response is not JSON, try getting text
           try {
              const textError = await res.text();
              if (textError) errorDetail = textError;
@@ -451,20 +448,17 @@ function UserApp() {
           }
         }
         alert(errorDetail);
-        setIsLoading(false); // Make sure loading stops on error
-        return; // Stop execution after handling error
+        setIsLoading(false);
+        return;
       }
-      // --- End Error Handling Improvement ---
 
-
-      // --- Success Handling ---
-      const data = await res.json(); // Now safe to parse JSON
+      const data = await res.json();
 
       const receivedToken = data.access_token;
       if (!receivedToken) {
         alert("Login succeeded but no token returned.");
-        setIsLoading(false); // Stop loading
-        return; // Stop execution
+        setIsLoading(false);
+        return;
       }
 
       setToken(receivedToken);
@@ -472,13 +466,11 @@ function UserApp() {
       setStarted(true);
       setEmail("");
       setPassword("");
-      // --- End Success Handling ---
 
     } catch (err) {
-      // Network errors or other unexpected issues
       console.error("Login error:", err);
-      // Check if it's a TypeError which can happen if fetch fails entirely (e.g., network down, CORS blocked before response)
       if (err instanceof TypeError) {
+         // ✅ FIX: Used backticks for template literal
          alert(Network error or CORS issue: Could not connect to the server at ${API_BASE_URL}.);
       } else {
          alert("An unexpected error occurred during login. Please try again.");
@@ -533,7 +525,6 @@ function UserApp() {
             </p>
           </div>
 
-           {/* Wrap inputs/button in a form tag */}
           <form className="auth-form" onSubmit={(e) => { e.preventDefault(); isSignup ? signup() : login(); }}>
             {isSignup && (
               <div className="input-group">
@@ -547,7 +538,7 @@ function UserApp() {
                     onChange={(e) => setName(e.target.value)}
                     disabled={isLoading}
                     className="auth-input"
-                    required // Added required attribute
+                    required
                   />
                 </div>
               </div>
@@ -564,7 +555,7 @@ function UserApp() {
                   onChange={(e) => setEmail(e.target.value)}
                   disabled={isLoading}
                   className="auth-input"
-                  required // Added required attribute
+                  required
                 />
               </div>
             </div>
@@ -580,22 +571,21 @@ function UserApp() {
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={isLoading}
                   className="auth-input"
-                  required // Added required attribute
-                  // Removed the bad password warning trigger, keep it simple
+                  required
                 />
                 <button
-                  type="button" // Important: type="button" prevents form submission
+                  type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="password-toggle"
                 >
-                  {showPassword ? "👁" : "👁‍🗨"}
+                  {showPassword ? "👁" : "👁"}
                 </button>
               </div>
             </div>
 
             {isSignup ? (
               <button
-                type="submit" // Use type="submit" inside a form
+                type="submit"
                 disabled={isLoading}
                 className="auth-submit"
               >
@@ -603,15 +593,14 @@ function UserApp() {
               </button>
             ) : (
               <button
-                type="submit" // Use type="submit" inside a form
+                type="submit"
                 disabled={isLoading}
                 className="auth-submit"
               >
                 {isLoading ? <div className="spinner"></div> : "Sign In"}
               </button>
             )}
-          </form> {/* End of form tag */}
-
+          </form>
 
           <div className="auth-divider">
             <span className="divider-line"></span>
@@ -625,7 +614,7 @@ function UserApp() {
                 ? "Already have an account?"
                 : "Don't have an account?"}{" "}
               <button
-                type="button" // Use type="button"
+                type="button"
                 onClick={() => !isLoading && setIsSignup(!isSignup)}
                 className="toggle-button"
                 disabled={isLoading}
