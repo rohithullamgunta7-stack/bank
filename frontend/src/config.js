@@ -13,7 +13,22 @@
 // export default API_BASE_URL;
 
 
-const isLocal = window.location.hostname === "localhost";
+// const isLocal = window.location.hostname === "localhost";
+
+// const API_BASE_URL = isLocal
+//   ? "http://127.0.0.1:8000"
+//   : process.env.REACT_APP_API_URL || "https://bank-3-zgrw.onrender.com";
+
+// export const WS_BASE_URL = isLocal
+//   ? "ws://127.0.0.1:8000"
+//   : process.env.REACT_APP_WS_URL || "https://bank-3-zgrw.onrender.com";
+
+// export default API_BASE_URL;
+
+
+
+
+const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 
 const API_BASE_URL = isLocal
   ? "http://127.0.0.1:8000"
@@ -21,6 +36,13 @@ const API_BASE_URL = isLocal
 
 export const WS_BASE_URL = isLocal
   ? "ws://127.0.0.1:8000"
-  : process.env.REACT_APP_WS_URL || "https://bank-3-zgrw.onrender.com";
+  : process.env.REACT_APP_WS_URL || "wss://bank-3-zgrw.onrender.com";
 
 export default API_BASE_URL;
+
+// Debug logging (remove in production)
+console.log("🔧 Config loaded:");
+console.log("  - Hostname:", window.location.hostname);
+console.log("  - Is Local:", isLocal);
+console.log("  - API URL:", API_BASE_URL);
+console.log("  - WebSocket URL:", WS_BASE_URL);
