@@ -1,12 +1,9 @@
 fastapi
 uvicorn
+gunicorn
 pymongo[srv]
-google-generativeai
-python-dotenv
+passlib[argon2]
+bcrypt
 python-jose[cryptography]
-passlib[bcrypt]
-pydantic
-email-validator
-python-multipart
-argon2-cffi>=23.1.0
-websockets>=12.0
+python-dotenv
+google-generativeai

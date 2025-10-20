@@ -1,621 +1,1728 @@
-from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect
-from typing import Dict, List, Optional
+
+# from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends, Query
+# from datetime import datetime, timezone
+# from config import escalations_collection, mongo_connected
+# from database import save_message, get_user_by_id
+# from auth import get_current_user
+# import json
+# import asyncio
+# import traceback
+
+# router = APIRouter()
+
+# # WebSocket connection manager
+# class ConnectionManager:
+#     def __init__(self):
+#         self.user_connections: dict[str, WebSocket] = {}
+#         self.agent_connections: dict[str, WebSocket] = {}
+    
+#     async def connect_user(self, user_id: str, websocket: WebSocket):
+#         await websocket.accept()
+#         self.user_connections[user_id] = websocket
+#         print(f"✅ User {user_id} connected. Total users: {len(self.user_connections)}")
+    
+#     async def connect_agent(self, agent_id: str, websocket: WebSocket):
+#         await websocket.accept()
+#         self.agent_connections[agent_id] = websocket
+#         print(f"✅ Agent {agent_id} connected. Total agents: {len(self.agent_connections)}")
+    
+#     def disconnect_user(self, user_id: str):
+#         if user_id in self.user_connections:
+#             del self.user_connections[user_id]
+#             print(f"❌ User {user_id} disconnected. Total users: {len(self.user_connections)}")
+    
+#     def disconnect_agent(self, agent_id: str):
+#         if agent_id in self.agent_connections:
+#             del self.agent_connections[agent_id]
+#             print(f"❌ Agent {agent_id} disconnected. Total agents: {len(self.agent_connections)}")
+    
+#     async def send_to_user(self, user_id: str, message: dict):
+#         if user_id in self.user_connections:
+#             try:
+#                 await self.user_connections[user_id].send_json(message)
+#                 print(f"📤 Sent to user {user_id}: {message.get('type')}")
+#                 return True
+#             except Exception as e:
+#                 print(f"❌ Error sending to user {user_id}: {e}")
+#                 self.disconnect_user(user_id)
+#         else:
+#             print(f"⚠️ User {user_id} not connected")
+#         return False
+    
+#     async def send_to_agent(self, agent_id: str, message: dict):
+#         if agent_id in self.agent_connections:
+#             try:
+#                 await self.agent_connections[agent_id].send_json(message)
+#                 print(f"📤 Sent to agent {agent_id}: {message.get('type')}")
+#                 return True
+#             except Exception as e:
+#                 print(f"❌ Error sending to agent {agent_id}: {e}")
+#                 self.disconnect_agent(agent_id)
+#         else:
+#             print(f"⚠️ Agent {agent_id} not connected")
+#         return False
+    
+#     async def broadcast_to_agents(self, message: dict):
+#         """Broadcast message to all connected agents"""
+#         print(f"📢 Broadcasting to {len(self.agent_connections)} agents: {message.get('type')}")
+#         disconnected = []
+#         for agent_id, websocket in self.agent_connections.items():
+#             try:
+#                 await websocket.send_json(message)
+#             except Exception as e:
+#                 print(f"❌ Error broadcasting to agent {agent_id}: {e}")
+#                 disconnected.append(agent_id)
+        
+#         for agent_id in disconnected:
+#             self.disconnect_agent(agent_id)
+
+# manager = ConnectionManager()
+
+# # ==================== ESCALATION FUNCTIONS ====================
+
+# def should_escalate(user_msg, history):
+#     """Determine if conversation should be escalated to human agent"""
+#     escalation_keywords = [
+#         "agent", "human", "representative", "manager", "supervisor",
+#         "talk to someone", "speak to", "call", "phone",
+#         "complaint", "dispute", "fraud", "unauthorized",
+#         "urgent", "emergency", "problem", "issue", "error",
+#         "bug", "broken", "not working", "failed transaction",
+#         "block card", "lost card", "stolen card", "permanent"
+#     ]
+    
+#     msg_lower = user_msg.lower()
+    
+#     for keyword in escalation_keywords:
+#         if keyword in msg_lower:
+#             return True, f"User requested escalation: {keyword} mentioned"
+    
+#     if len(history) > 6:
+#         recent_msgs = [m.get("content", "").lower() for m in history[-6:] if m.get("role") == "user"]
+#         if len(recent_msgs) >= 3:
+#             same_word_count = {}
+#             for msg in recent_msgs:
+#                 words = msg.split()
+#                 for word in words:
+#                     if len(word) > 4:
+#                         same_word_count[word] = same_word_count.get(word, 0) + 1
+            
+#             for word, count in same_word_count.items():
+#                 if count >= 3:
+#                     return True, f"User repeating concern: '{word}' mentioned multiple times"
+    
+#     return False, None
+
+
+# async def create_escalation_async(user_id, reason, context=None, priority="medium"):
+#     """Create an escalation record in database with async notification"""
+#     if not mongo_connected or escalations_collection is None:
+#         return f"ESC_{int(datetime.now(timezone.utc).timestamp())}"
+    
+#     try:
+#         escalation_id = f"ESC_{int(datetime.now(timezone.utc).timestamp())}"
+        
+#         escalation_doc = {
+#             "escalation_id": escalation_id,
+#             "user_id": user_id,
+#             "reason": reason,
+#             "status": "open",
+#             "priority": priority,
+#             "created_at": datetime.now(timezone.utc),
+#             "assigned_to": None,
+#             "context": context or {},
+#             "messages": []
+#         }
+        
+#         escalations_collection.insert_one(escalation_doc)
+#         print(f"🚨 Escalation created: {escalation_id} with priority {priority}")
+        
+#         # Notify all agents about new escalation
+#         await manager.broadcast_to_agents({
+#             "type": "new_escalation",
+#             "escalation": {
+#                 "escalation_id": escalation_id,
+#                 "user_id": user_id,
+#                 "reason": reason,
+#                 "priority": priority,
+#                 "created_at": datetime.now(timezone.utc).isoformat()
+#             }
+#         })
+        
+#         return escalation_id
+    
+#     except Exception as e:
+#         print(f"❌ Error creating escalation: {e}")
+#         traceback.print_exc()
+#         return f"ESC_{int(datetime.now(timezone.utc).timestamp())}"
+
+
+# def create_escalation(user_id, reason, context=None, priority="medium"):
+#     """Synchronous wrapper for create_escalation_async"""
+#     escalation_id = f"ESC_{int(datetime.now(timezone.utc).timestamp())}"
+    
+#     if not mongo_connected or escalations_collection is None:
+#         return escalation_id
+    
+#     try:
+#         escalation_doc = {
+#             "escalation_id": escalation_id,
+#             "user_id": user_id,
+#             "reason": reason,
+#             "status": "open",
+#             "priority": priority,
+#             "created_at": datetime.now(timezone.utc),
+#             "assigned_to": None,
+#             "context": context or {},
+#             "messages": []
+#         }
+        
+#         escalations_collection.insert_one(escalation_doc)
+#         print(f"🚨 Escalation created: {escalation_id} with priority {priority}")
+        
+#         # Schedule async notification
+#         try:
+#             loop = asyncio.get_event_loop()
+#             loop.create_task(manager.broadcast_to_agents({
+#                 "type": "new_escalation",
+#                 "escalation": {
+#                     "escalation_id": escalation_id,
+#                     "user_id": user_id,
+#                     "reason": reason,
+#                     "priority": priority,
+#                     "created_at": datetime.now(timezone.utc).isoformat()
+#                 }
+#             }))
+#         except Exception as e:
+#             print(f"⚠️ Could not send broadcast notification: {e}")
+        
+#         return escalation_id
+    
+#     except Exception as e:
+#         print(f"❌ Error creating escalation: {e}")
+#         traceback.print_exc()
+#         return escalation_id
+
+
+# def get_escalation(escalation_id):
+#     """Retrieve escalation details"""
+#     if not mongo_connected or escalations_collection is None:
+#         return None
+    
+#     try:
+#         return escalations_collection.find_one({"escalation_id": escalation_id})
+#     except Exception as e:
+#         print(f"❌ Error fetching escalation: {e}")
+#         return None
+
+
+# def add_agent_message(escalation_id, agent_id, message):
+#     """Add agent message to escalation"""
+#     if not mongo_connected or escalations_collection is None:
+#         return False
+    
+#     try:
+#         escalations_collection.update_one(
+#             {"escalation_id": escalation_id},
+#             {
+#                 "$push": {
+#                     "messages": {
+#                         "sender": "agent",
+#                         "agent_id": agent_id,
+#                         "message": message,
+#                         "timestamp": datetime.now(timezone.utc).isoformat()
+#                     }
+#                 }
+#             }
+#         )
+#         print(f"💾 Agent message saved to {escalation_id}")
+#         return True
+#     except Exception as e:
+#         print(f"❌ Error adding agent message: {e}")
+#         return False
+
+
+# def add_user_message(escalation_id, message):
+#     """Add user message to escalation"""
+#     if not mongo_connected or escalations_collection is None:
+#         return False
+    
+#     try:
+#         escalations_collection.update_one(
+#             {"escalation_id": escalation_id},
+#             {
+#                 "$push": {
+#                     "messages": {
+#                         "sender": "user",
+#                         "message": message,
+#                         "timestamp": datetime.now(timezone.utc).isoformat()
+#                     }
+#                 }
+#             }
+#         )
+#         print(f"💾 User message saved to {escalation_id}")
+#         return True
+#     except Exception as e:
+#         print(f"❌ Error adding user message: {e}")
+#         return False
+
+
+# def close_escalation(escalation_id, resolution):
+#     """Close an escalation"""
+#     if not mongo_connected or escalations_collection is None:
+#         return False
+    
+#     try:
+#         escalations_collection.update_one(
+#             {"escalation_id": escalation_id},
+#             {
+#                 "$set": {
+#                     "status": "closed",
+#                     "closed_at": datetime.now(timezone.utc),
+#                     "resolution": resolution
+#                 }
+#             }
+#         )
+#         print(f"✅ Escalation {escalation_id} closed")
+#         return True
+#     except Exception as e:
+#         print(f"❌ Error closing escalation: {e}")
+#         return False
+
+
+# # ==================== WEBSOCKET ENDPOINTS ====================
+
+# @router.websocket("/ws/user/{user_id}")
+# async def websocket_user_endpoint(websocket: WebSocket, user_id: str):
+#     """WebSocket for real-time escalation messages for users"""
+#     await manager.connect_user(user_id, websocket)
+    
+#     try:
+#         while True:
+#             try:
+#                 # Check if websocket is still connected before receiving
+#                 if websocket.client_state.value != 1:  # 1 = CONNECTED
+#                     print(f"⚠️ WebSocket for user {user_id} is not in CONNECTED state")
+#                     break
+                
+#                 data = await websocket.receive_text()
+#                 message_data = json.loads(data)
+#                 print(f"📨 Received from user {user_id}: {message_data.get('type')}")
+                
+#                 if message_data.get("type") == "ping":
+#                     await websocket.send_json({"type": "pong"})
+#                     continue
+                
+#                 if message_data.get("type") == "message":
+#                     escalation_id = message_data.get("escalation_id")
+#                     user_message = message_data.get("message")
+                    
+#                     if not escalation_id or not user_message:
+#                         await websocket.send_json({
+#                             "type": "error",
+#                             "message": "Missing escalation_id or message"
+#                         })
+#                         continue
+                    
+#                     # Get escalation to find assigned agent
+#                     escalation = get_escalation(escalation_id)
+#                     if not escalation:
+#                         await websocket.send_json({
+#                             "type": "error",
+#                             "message": "Escalation not found"
+#                         })
+#                         continue
+                    
+#                     # Save user message to escalation
+#                     add_user_message(escalation_id, user_message)
+                    
+#                     # Send to assigned agent if connected
+#                     if escalation.get("assigned_to"):
+#                         sent = await manager.send_to_agent(escalation["assigned_to"], {
+#                             "type": "user_message",
+#                             "escalation_id": escalation_id,
+#                             "message": user_message,
+#                             "timestamp": datetime.now(timezone.utc).isoformat()
+#                         })
+#                         if sent:
+#                             print(f"✅ Message forwarded to agent {escalation['assigned_to']}")
+#                     else:
+#                         print(f"⚠️ No agent assigned to escalation {escalation_id}")
+                    
+#                     # Acknowledge receipt
+#                     await websocket.send_json({
+#                         "type": "ack",
+#                         "message": "Message received"
+#                     })
+                    
+#             except json.JSONDecodeError as e:
+#                 print(f"❌ JSON decode error from user {user_id}: {e}")
+#                 try:
+#                     await websocket.send_json({
+#                         "type": "error",
+#                         "message": "Invalid JSON format"
+#                     })
+#                 except:
+#                     break
+#             except RuntimeError as e:
+#                 # This catches "Cannot call receive once a disconnect message has been received"
+#                 if "disconnect message has been received" in str(e):
+#                     print(f"🔌 User {user_id} WebSocket received disconnect message")
+#                     break
+#                 else:
+#                     print(f"❌ RuntimeError for user {user_id}: {e}")
+#                     traceback.print_exc()
+#                     break
+#             except Exception as e:
+#                 print(f"❌ Error processing message from user {user_id}: {e}")
+#                 traceback.print_exc()
+#                 # Don't break on general exceptions, but check connection state
+#                 if websocket.client_state.value != 1:
+#                     break
+    
+#     except WebSocketDisconnect:
+#         manager.disconnect_user(user_id)
+#         print(f"🔌 User {user_id} disconnected normally")
+#     except Exception as e:
+#         print(f"❌ WebSocket error for user {user_id}: {e}")
+#         traceback.print_exc()
+#         manager.disconnect_user(user_id)
+
+
+# @router.websocket("/ws/agent/{agent_id}")
+# async def websocket_agent_endpoint(websocket: WebSocket, agent_id: str):
+#     """WebSocket for real-time escalation messages for agents"""
+#     await manager.connect_agent(agent_id, websocket)
+    
+#     try:
+#         while True:
+#             try:
+#                 # Check if websocket is still connected before receiving
+#                 if websocket.client_state.value != 1:  # 1 = CONNECTED
+#                     print(f"⚠️ WebSocket for agent {agent_id} is not in CONNECTED state")
+#                     break
+                
+#                 data = await websocket.receive_text()
+#                 message_data = json.loads(data)
+#                 print(f"📨 Received from agent {agent_id}: {message_data.get('type')}")
+                
+#                 if message_data.get("type") == "ping":
+#                     await websocket.send_json({"type": "pong"})
+#                     continue
+                
+#                 if message_data.get("type") == "message":
+#                     escalation_id = message_data.get("escalation_id")
+#                     agent_message = message_data.get("message")
+                    
+#                     if not escalation_id or not agent_message:
+#                         await websocket.send_json({
+#                             "type": "error",
+#                             "message": "Missing escalation_id or message"
+#                         })
+#                         continue
+                    
+#                     # Get escalation to find user
+#                     escalation = get_escalation(escalation_id)
+#                     if not escalation:
+#                         await websocket.send_json({
+#                             "type": "error",
+#                             "message": "Escalation not found"
+#                         })
+#                         continue
+                    
+#                     # Save agent message to escalation
+#                     add_agent_message(escalation_id, agent_id, agent_message)
+                    
+#                     # Send to user if connected
+#                     sent = await manager.send_to_user(escalation["user_id"], {
+#                         "type": "agent_message",
+#                         "escalation_id": escalation_id,
+#                         "message": agent_message,
+#                         "timestamp": datetime.now(timezone.utc).isoformat()
+#                     })
+                    
+#                     # Acknowledge receipt
+#                     await websocket.send_json({
+#                         "type": "ack",
+#                         "message": "Message sent to user" if sent else "User not connected, message saved"
+#                     })
+                    
+#             except json.JSONDecodeError as e:
+#                 print(f"❌ JSON decode error from agent {agent_id}: {e}")
+#                 try:
+#                     await websocket.send_json({
+#                         "type": "error",
+#                         "message": "Invalid JSON format"
+#                     })
+#                 except:
+#                     break
+#             except RuntimeError as e:
+#                 # This catches "Cannot call receive once a disconnect message has been received"
+#                 if "disconnect message has been received" in str(e):
+#                     print(f"🔌 Agent {agent_id} WebSocket received disconnect message")
+#                     break
+#                 else:
+#                     print(f"❌ RuntimeError for agent {agent_id}: {e}")
+#                     traceback.print_exc()
+#                     break
+#             except Exception as e:
+#                 print(f"❌ Error processing message from agent {agent_id}: {e}")
+#                 traceback.print_exc()
+#                 # Don't break on general exceptions, but check connection state
+#                 if websocket.client_state.value != 1:
+#                     break
+    
+#     except WebSocketDisconnect:
+#         manager.disconnect_agent(agent_id)
+#         print(f"🔌 Agent {agent_id} disconnected normally")
+#     except Exception as e:
+#         print(f"❌ WebSocket error for agent {agent_id}: {e}")
+#         traceback.print_exc()
+#         manager.disconnect_agent(agent_id)
+
+
+# # ==================== REST API ENDPOINTS ====================
+
+# @router.post("/escalate")
+# async def escalate_conversation(current_user: dict = Depends(get_current_user)):
+#     """Escalate current conversation to human agent"""
+#     if not mongo_connected:
+#         raise HTTPException(status_code=503, detail="Database unavailable")
+    
+#     try:
+#         from database import get_or_create_user
+        
+#         user = get_or_create_user(
+#             current_user["email"],
+#             current_user.get("name"),
+#             current_user.get("role", "user")
+#         )
+        
+#         if not user or "user_id" not in user:
+#             raise HTTPException(status_code=500, detail="User not found")
+        
+#         # Use async version to properly send notifications
+#         escalation_id = await create_escalation_async(
+#             user["user_id"],
+#             "User requested to speak with support agent",
+#             {"user_email": current_user["email"], "user_name": current_user.get("name")},
+#             priority="medium"
+#         )
+        
+#         return {
+#             "escalation_id": escalation_id,
+#             "status": "escalated",
+#             "message": "Your case has been escalated. A support agent will assist you shortly."
+#         }
+    
+#     except Exception as e:
+#         print(f"❌ Escalation error: {e}")
+#         traceback.print_exc()
+#         raise HTTPException(status_code=500, detail="Failed to escalate conversation")
+
+
+# @router.get("/escalations/my")
+# def get_my_escalations(current_user: dict = Depends(get_current_user)):
+#     """Get user's escalations"""
+#     if not mongo_connected:
+#         raise HTTPException(status_code=503, detail="Database unavailable")
+    
+#     try:
+#         from database import get_or_create_user
+        
+#         user = get_or_create_user(
+#             current_user["email"],
+#             current_user.get("name"),
+#             current_user.get("role", "user")
+#         )
+        
+#         if not user or "user_id" not in user:
+#             raise HTTPException(status_code=500, detail="User not found")
+        
+#         escalations = list(escalations_collection.find(
+#             {"user_id": user["user_id"]}
+#         ).sort("created_at", -1))
+        
+#         result = []
+#         for esc in escalations:
+#             esc["_id"] = str(esc.get("_id", ""))
+#             if hasattr(esc.get("created_at"), "isoformat"):
+#                 esc["created_at"] = esc["created_at"].isoformat()
+#             if hasattr(esc.get("closed_at"), "isoformat"):
+#                 esc["closed_at"] = esc["closed_at"].isoformat()
+#             result.append(esc)
+        
+#         return {"escalations": result, "total": len(result)}
+    
+#     except Exception as e:
+#         print(f"❌ Get my escalations error: {e}")
+#         raise HTTPException(status_code=500, detail="Failed to fetch escalations")
+
+
+# @router.get("/escalations/pending")
+# def get_pending_escalations(current_user: dict = Depends(get_current_user)):
+#     """Get pending escalations (unassigned)"""
+#     if not mongo_connected:
+#         raise HTTPException(status_code=503, detail="Database unavailable")
+    
+#     role = current_user.get("role", "user")
+#     if role not in ["customer_support_agent", "admin"]:
+#         raise HTTPException(status_code=403, detail="Insufficient permissions")
+    
+#     try:
+#         escalations = list(escalations_collection.find({
+#             "status": "open",
+#             "assigned_to": None
+#         }).sort("created_at", -1))
+        
+#         result = []
+#         for esc in escalations:
+#             esc["_id"] = str(esc.get("_id", ""))
+#             if hasattr(esc.get("created_at"), "isoformat"):
+#                 esc["created_at"] = esc["created_at"].isoformat()
+#             if hasattr(esc.get("closed_at"), "isoformat"):
+#                 esc["closed_at"] = esc["closed_at"].isoformat()
+#             result.append(esc)
+        
+#         return {"escalations": result, "total": len(result)}
+    
+#     except Exception as e:
+#         print(f"❌ Get pending escalations error: {e}")
+#         raise HTTPException(status_code=500, detail="Failed to fetch pending escalations")
+
+
+# @router.get("/escalations/assigned")
+# def get_assigned_escalations(current_user: dict = Depends(get_current_user)):
+#     """Get escalations assigned to current agent"""
+#     if not mongo_connected:
+#         raise HTTPException(status_code=503, detail="Database unavailable")
+    
+#     role = current_user.get("role", "user")
+#     if role not in ["customer_support_agent", "admin"]:
+#         raise HTTPException(status_code=403, detail="Insufficient permissions")
+    
+#     try:
+#         from database import get_or_create_user
+        
+#         user = get_or_create_user(
+#             current_user["email"],
+#             current_user.get("name"),
+#             current_user.get("role", "user")
+#         )
+        
+#         if not user or "user_id" not in user:
+#             raise HTTPException(status_code=500, detail="User not found")
+        
+#         escalations = list(escalations_collection.find({
+#             "assigned_to": user["user_id"],
+#             "status": {"$ne": "closed"}
+#         }).sort("created_at", -1))
+        
+#         result = []
+#         for esc in escalations:
+#             esc["_id"] = str(esc.get("_id", ""))
+#             if hasattr(esc.get("created_at"), "isoformat"):
+#                 esc["created_at"] = esc["created_at"].isoformat()
+#             if hasattr(esc.get("closed_at"), "isoformat"):
+#                 esc["closed_at"] = esc["closed_at"].isoformat()
+#             result.append(esc)
+        
+#         return {"escalations": result, "total": len(result)}
+    
+#     except Exception as e:
+#         print(f"❌ Get assigned escalations error: {e}")
+#         raise HTTPException(status_code=500, detail="Failed to fetch assigned escalations")
+
+
+# @router.get("/escalations")
+# def get_all_escalations(current_user: dict = Depends(get_current_user)):
+#     """Get all escalations (support agents and admins only)"""
+#     if not mongo_connected:
+#         raise HTTPException(status_code=503, detail="Database unavailable")
+    
+#     role = current_user.get("role", "user")
+#     if role not in ["customer_support_agent", "admin"]:
+#         raise HTTPException(status_code=403, detail="Insufficient permissions")
+    
+#     try:
+#         escalations = list(escalations_collection.find().sort("created_at", -1))
+        
+#         result = []
+#         for esc in escalations:
+#             esc["_id"] = str(esc.get("_id", ""))
+#             if hasattr(esc.get("created_at"), "isoformat"):
+#                 esc["created_at"] = esc["created_at"].isoformat()
+#             if hasattr(esc.get("closed_at"), "isoformat"):
+#                 esc["closed_at"] = esc["closed_at"].isoformat()
+#             result.append(esc)
+        
+#         return {"escalations": result, "total": len(result)}
+    
+#     except Exception as e:
+#         print(f"❌ Get all escalations error: {e}")
+#         raise HTTPException(status_code=500, detail="Failed to fetch escalations")
+
+
+# @router.get("/{escalation_id}")
+# def get_escalation_details(escalation_id: str, current_user: dict = Depends(get_current_user)):
+#     """Get specific escalation details"""
+#     if not mongo_connected:
+#         raise HTTPException(status_code=503, detail="Database unavailable")
+    
+#     try:
+#         escalation = get_escalation(escalation_id)
+#         if not escalation:
+#             raise HTTPException(status_code=404, detail="Escalation not found")
+        
+#         role = current_user.get("role", "user")
+#         from database import get_or_create_user
+#         user = get_or_create_user(current_user["email"], current_user.get("name"), role)
+        
+#         if role == "user" and escalation["user_id"] != user.get("user_id"):
+#             raise HTTPException(status_code=403, detail="Insufficient permissions")
+        
+#         escalation["_id"] = str(escalation.get("_id", ""))
+#         if hasattr(escalation.get("created_at"), "isoformat"):
+#             escalation["created_at"] = escalation["created_at"].isoformat()
+#         if hasattr(escalation.get("closed_at"), "isoformat"):
+#             escalation["closed_at"] = escalation["closed_at"].isoformat()
+        
+#         return escalation
+    
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         print(f"❌ Get escalation details error: {e}")
+#         raise HTTPException(status_code=500, detail="Failed to fetch escalation")
+
+
+# @router.get("/messages/{escalation_id}")
+# def get_escalation_messages(escalation_id: str, current_user: dict = Depends(get_current_user)):
+#     """Get messages for an escalation"""
+#     if not mongo_connected:
+#         raise HTTPException(status_code=503, detail="Database unavailable")
+    
+#     try:
+#         escalation = get_escalation(escalation_id)
+#         if not escalation:
+#             raise HTTPException(status_code=404, detail="Escalation not found")
+        
+#         role = current_user.get("role", "user")
+#         from database import get_or_create_user
+#         user = get_or_create_user(current_user["email"], current_user.get("name"), role)
+        
+#         if role == "user" and escalation["user_id"] != user.get("user_id"):
+#             raise HTTPException(status_code=403, detail="Insufficient permissions")
+        
+#         return {"messages": escalation.get("messages", [])}
+    
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         print(f"❌ Get escalation messages error: {e}")
+#         raise HTTPException(status_code=500, detail="Failed to fetch messages")
+
+
+# @router.post("/{escalation_id}/message")
+# async def send_escalation_message(escalation_id: str, message: str = Query(...), current_user: dict = Depends(get_current_user)):
+#     """Send message in escalation (agent or user)"""
+#     if not mongo_connected:
+#         raise HTTPException(status_code=503, detail="Database unavailable")
+    
+#     try:
+#         escalation = get_escalation(escalation_id)
+#         if not escalation:
+#             raise HTTPException(status_code=404, detail="Escalation not found")
+        
+#         role = current_user.get("role", "user")
+#         from database import get_or_create_user
+#         user = get_or_create_user(current_user["email"], current_user.get("name"), role)
+        
+#         if role == "user" and escalation["user_id"] != user.get("user_id"):
+#             raise HTTPException(status_code=403, detail="Insufficient permissions")
+        
+#         if role in ["customer_support_agent", "admin"]:
+#             add_agent_message(escalation_id, user.get("user_id"), message)
+#             # Send to user via WebSocket
+#             await manager.send_to_user(escalation["user_id"], {
+#                 "type": "agent_message",
+#                 "escalation_id": escalation_id,
+#                 "message": message,
+#                 "timestamp": datetime.now(timezone.utc).isoformat()
+#             })
+#         else:
+#             add_user_message(escalation_id, message)
+#             # Send to agent via WebSocket
+#             if escalation.get("assigned_to"):
+#                 await manager.send_to_agent(escalation["assigned_to"], {
+#                     "type": "user_message",
+#                     "escalation_id": escalation_id,
+#                     "message": message,
+#                     "timestamp": datetime.now(timezone.utc).isoformat()
+#                 })
+        
+#         return {"status": "sent", "message": "Message added to escalation"}
+    
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         print(f"❌ Send escalation message error: {e}")
+#         traceback.print_exc()
+#         raise HTTPException(status_code=500, detail="Failed to send message")
+
+
+# @router.post("/{escalation_id}/assign")
+# async def assign_escalation(escalation_id: str, current_user: dict = Depends(get_current_user)):
+#     """Assign escalation to current agent"""
+#     if not mongo_connected:
+#         raise HTTPException(status_code=503, detail="Database unavailable")
+    
+#     role = current_user.get("role", "user")
+#     if role not in ["customer_support_agent", "admin"]:
+#         raise HTTPException(status_code=403, detail="Insufficient permissions")
+    
+#     try:
+#         from database import get_or_create_user
+        
+#         user = get_or_create_user(
+#             current_user["email"],
+#             current_user.get("name"),
+#             current_user.get("role", "user")
+#         )
+        
+#         if not user or "user_id" not in user:
+#             raise HTTPException(status_code=500, detail="User not found")
+        
+#         escalation = get_escalation(escalation_id)
+#         if not escalation:
+#             raise HTTPException(status_code=404, detail="Escalation not found")
+        
+#         if escalation.get("assigned_to") and escalation["assigned_to"] != user["user_id"]:
+#             raise HTTPException(status_code=400, detail="Escalation already assigned to another agent")
+        
+#         escalations_collection.update_one(
+#             {"escalation_id": escalation_id},
+#             {"$set": {
+#                 "assigned_to": user["user_id"],
+#                 "assigned_at": datetime.now(timezone.utc)
+#             }}
+#         )
+        
+#         # Notify user that agent has joined
+#         await manager.send_to_user(escalation["user_id"], {
+#             "type": "escalation_assigned",
+#             "escalation_id": escalation_id,
+#             "agent_name": user.get("name", "Support Agent"),
+#             "message": f"{user.get('name', 'Support Agent')} has joined the chat"
+#         })
+        
+#         return {"status": "assigned", "message": f"Escalation assigned to {user.get('name', 'agent')}"}
+    
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         print(f"❌ Assign escalation error: {e}")
+#         traceback.print_exc()
+#         raise HTTPException(status_code=500, detail="Failed to assign escalation")
+
+
+# @router.post("/{escalation_id}/close")
+# def close_escalation_endpoint(escalation_id: str, resolution: str = Query(...), current_user: dict = Depends(get_current_user)):
+#     """Close an escalation (support agents and admins only)"""
+#     if not mongo_connected:
+#         raise HTTPException(status_code=503, detail="Database unavailable")
+    
+#     role = current_user.get("role", "user")
+#     if role not in ["customer_support_agent", "admin"]:
+#         raise HTTPException(status_code=403, detail="Insufficient permissions")
+    
+#     try:
+#         if close_escalation(escalation_id, resolution):
+#             return {"status": "closed", "message": "Escalation closed successfully"}
+#         else:
+#             raise HTTPException(status_code=500, detail="Failed to close escalation")
+    
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         print(f"❌ Close escalation error: {e}")
+#         traceback.print_exc()
+#         raise HTTPException(status_code=500, detail="Failed to close escalation")
+
+
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends, Query
 from datetime import datetime, timezone
-from .database import messages_collection, users_collection
-from .config import orders_col, refunds_col
-from .auth import get_current_user, require_support_or_admin
-from .models import EscalationRequest
-from bson import ObjectId
 import json
 import asyncio
+import traceback
+
+# Corrected relative imports
+from .config import escalations_collection, mongo_connected
+from .database import save_message, get_user_by_id
+from .auth import get_current_user
+
 
 router = APIRouter()
 
-# In-memory storage
-active_escalations: Dict[str, dict] = {}
-agent_connections: Dict[str, WebSocket] = {}
-user_connections: Dict[str, WebSocket] = {}
+# WebSocket connection manager
+class ConnectionManager:
+    def __init__(self):
+        self.user_connections: dict[str, WebSocket] = {}
+        self.agent_connections: dict[str, WebSocket] = {}
+    
+    async def connect_user(self, user_id: str, websocket: WebSocket):
+        await websocket.accept()
+        self.user_connections[user_id] = websocket
+        print(f"✅ User {user_id} connected. Total users: {len(self.user_connections)}")
+    
+    async def connect_agent(self, agent_id: str, websocket: WebSocket):
+        await websocket.accept()
+        self.agent_connections[agent_id] = websocket
+        print(f"✅ Agent {agent_id} connected. Total agents: {len(self.agent_connections)}")
+    
+    def disconnect_user(self, user_id: str):
+        if user_id in self.user_connections:
+            del self.user_connections[user_id]
+            print(f"❌ User {user_id} disconnected. Total users: {len(self.user_connections)}")
+    
+    def disconnect_agent(self, agent_id: str):
+        if agent_id in self.agent_connections:
+            del self.agent_connections[agent_id]
+            print(f"❌ Agent {agent_id} disconnected. Total agents: {len(self.agent_connections)}")
+    
+    async def send_to_user(self, user_id: str, message: dict):
+        if user_id in self.user_connections:
+            try:
+                await self.user_connections[user_id].send_json(message)
+                print(f"📤 Sent to user {user_id}: {message.get('type')}")
+                return True
+            except Exception as e:
+                print(f"❌ Error sending to user {user_id}: {e}")
+                self.disconnect_user(user_id)
+        else:
+            print(f"⚠️ User {user_id} not connected")
+        return False
+    
+    async def send_to_agent(self, agent_id: str, message: dict):
+        if agent_id in self.agent_connections:
+            try:
+                await self.agent_connections[agent_id].send_json(message)
+                print(f"📤 Sent to agent {agent_id}: {message.get('type')}")
+                return True
+            except Exception as e:
+                print(f"❌ Error sending to agent {agent_id}: {e}")
+                self.disconnect_agent(agent_id)
+        else:
+            print(f"⚠️ Agent {agent_id} not connected")
+        return False
+    
+    async def broadcast_to_agents(self, message: dict):
+        """Broadcast message to all connected agents"""
+        print(f"📢 Broadcasting to {len(self.agent_connections)} agents: {message.get('type')}")
+        disconnected = []
+        for agent_id, websocket in self.agent_connections.items():
+            try:
+                await websocket.send_json(message)
+            except Exception as e:
+                print(f"❌ Error broadcasting to agent {agent_id}: {e}")
+                disconnected.append(agent_id)
+        
+        for agent_id in disconnected:
+            self.disconnect_agent(agent_id)
 
-CRITICAL_KEYWORDS = [
-    "insect", "bug", "hair", "foreign object", "food poisoning", "sick", 
-    "allergy", "allergic reaction", "wrong address", "missing order",
-    "not delivered", "3 hours", "4 hours", "very late", "extremely late",
-    "refund not received", "charged twice", "overcharged", "fraud"
-]
+manager = ConnectionManager()
 
-# ----------------- Helper Functions -----------------
+# ==================== ESCALATION FUNCTIONS ====================
 
-def convert_objectid(obj):
-    """Recursively convert ObjectId to str"""
-    if isinstance(obj, list):
-        return [convert_objectid(i) for i in obj]
-    elif isinstance(obj, dict):
-        return {k: convert_objectid(v) for k, v in obj.items()}
-    elif isinstance(obj, ObjectId):
-        return str(obj)
-    else:
-        return obj
-
-def should_escalate(message: str, conversation_history: list) -> tuple[bool, str]:
-    msg_lower = message.lower()
-    for keyword in CRITICAL_KEYWORDS:
+def should_escalate(user_msg, history):
+    """Determine if conversation should be escalated to human agent"""
+    escalation_keywords = [
+        "agent", "human", "representative", "manager", "supervisor",
+        "talk to someone", "speak to", "call", "phone",
+        "complaint", "dispute", "fraud", "unauthorized",
+        "urgent", "emergency", "problem", "issue", "error",
+        "bug", "broken", "not working", "failed transaction",
+        "block card", "lost card", "stolen card", "permanent"
+    ]
+    
+    msg_lower = user_msg.lower()
+    
+    for keyword in escalation_keywords:
         if keyword in msg_lower:
-            return True, f"Critical issue detected: {keyword}"
+            return True, f"User requested escalation: {keyword} mentioned"
     
-    if len(conversation_history) >= 6:
-        recent_user_msgs = [msg.get('content', '').lower() for msg in conversation_history[-6:] if msg.get('role') == 'user']
-        complaint_indicators = ["not", "no", "still", "again", "problem", "issue", "wrong"]
-        complaint_count = sum(1 for msg in recent_user_msgs if any(word in msg for word in complaint_indicators))
-        if complaint_count >= 3:
-            return True, "Multiple unresolved complaints"
+    if len(history) > 6:
+        recent_msgs = [m.get("content", "").lower() for m in history[-6:] if m.get("role") == "user"]
+        if len(recent_msgs) >= 3:
+            same_word_count = {}
+            for msg in recent_msgs:
+                words = msg.split()
+                for word in words:
+                    if len(word) > 4:
+                        same_word_count[word] = same_word_count.get(word, 0) + 1
+            
+            for word, count in same_word_count.items():
+                if count >= 3:
+                    return True, f"User repeating concern: '{word}' mentioned multiple times"
     
-    agent_requests = ["speak to agent", "human agent", "talk to person", "real person", "customer service", "supervisor", "manager"]
-    if any(req in msg_lower for req in agent_requests):
-        return True, "User requested human agent"
+    return False, None
+
+
+async def create_escalation_async(user_id, reason, context=None, priority="medium"):
+    """Create an escalation record in database with async notification"""
+    if not mongo_connected or escalations_collection is None:
+        return f"ESC_{int(datetime.now(timezone.utc).timestamp())}"
     
-    return False, ""
-
-def determine_priority(reason: str) -> str:
-    critical_terms = ["food poisoning", "allergic", "sick", "insect", "fraud"]
-    high_terms = ["not delivered", "missing", "wrong address", "3 hours", "4 hours"]
-    reason_lower = reason.lower()
-    
-    if any(term in reason_lower for term in critical_terms):
-        return "critical"
-    elif any(term in reason_lower for term in high_terms):
-        return "high"
-    else:
-        return "medium"
-
-def get_available_agents() -> List[dict]:
-    try:
-        agents = list(users_collection.find(
-            {"role": "customer_support_agent"}, 
-            {"_id": 0, "user_id": 1, "name": 1, "email": 1}
-        ))
-        return [agent for agent in agents if agent["user_id"] in agent_connections]
-    except Exception as e:
-        print(f"Error fetching agents: {e}")
-        return []
-
-async def notify_agent_new_escalation(agent_id: str, escalation_id: str, escalation: dict):
-    """Send WebSocket notification to agent about new escalation"""
-    if agent_id in agent_connections:
-        try:
-            await agent_connections[agent_id].send_json({
-                "type": "new_escalation",
-                "escalation_id": escalation_id,
-                "escalation": convert_objectid(escalation)
-            })
-            print(f"Notified agent {agent_id} about escalation {escalation_id}")
-            return True
-        except Exception as e:
-            print(f"Error notifying agent: {e}")
-            return False
-    else:
-        print(f"Agent {agent_id} not connected to WebSocket")
-        return False
-
-async def assign_escalation_to_agent(escalation_id: str, agent_id: str) -> bool:
-    try:
-        if escalation_id not in active_escalations:
-            return False
-        
-        active_escalations[escalation_id]["assigned_agent_id"] = agent_id
-        active_escalations[escalation_id]["status"] = "assigned"
-        active_escalations[escalation_id]["assigned_at"] = datetime.now(timezone.utc).isoformat()
-
-        from .config import db
-        if db is not None:
-            db["escalations"].update_one(
-                {"escalation_id": escalation_id},
-                {"$set": {
-                    "assigned_agent_id": agent_id,
-                    "status": "assigned",
-                    "assigned_at": datetime.now(timezone.utc).isoformat()
-                }},
-                upsert=True
-            )
-        
-        await notify_agent_new_escalation(agent_id, escalation_id, active_escalations[escalation_id])
-        
-        return True
-    except Exception as e:
-        print(f"Error assigning escalation: {e}")
-        return False
-
-def create_escalation(user_id: str, reason: str, context: dict) -> str:
     try:
         escalation_id = f"ESC_{int(datetime.now(timezone.utc).timestamp())}"
-        escalation = {
+        
+        escalation_doc = {
             "escalation_id": escalation_id,
             "user_id": user_id,
             "reason": reason,
-            "status": "pending",
-            "assigned_agent_id": None,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "resolved_at": None,
-            "context": context,
-            "priority": determine_priority(reason),
-            "notes": []
+            "status": "open",
+            "priority": priority,
+            "created_at": datetime.now(timezone.utc),
+            "assigned_to": None,
+            "context": context or {},
+            "messages": []
         }
-        active_escalations[escalation_id] = escalation
-
-        from .config import db
-        if db is not None:
-            db["escalations"].insert_one(escalation.copy())
-
+        
+        escalations_collection.insert_one(escalation_doc)
+        print(f"🚨 Escalation created: {escalation_id} with priority {priority}")
+        
+        # Notify all agents about new escalation
+        await manager.broadcast_to_agents({
+            "type": "new_escalation",
+            "escalation": {
+                "escalation_id": escalation_id,
+                "user_id": user_id,
+                "reason": reason,
+                "priority": priority,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+        })
+        
         return escalation_id
+    
     except Exception as e:
-        print(f"Error creating escalation: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to create escalation: {str(e)}")
+        print(f"❌ Error creating escalation: {e}")
+        traceback.print_exc()
+        return f"ESC_{int(datetime.now(timezone.utc).timestamp())}"
 
-# ----------------- REST Endpoints -----------------
+
+def create_escalation(user_id, reason, context=None, priority="medium"):
+    """Synchronous wrapper for create_escalation_async"""
+    escalation_id = f"ESC_{int(datetime.now(timezone.utc).timestamp())}"
+    
+    if not mongo_connected or escalations_collection is None:
+        return escalation_id
+    
+    try:
+        escalation_doc = {
+            "escalation_id": escalation_id,
+            "user_id": user_id,
+            "reason": reason,
+            "status": "open",
+            "priority": priority,
+            "created_at": datetime.now(timezone.utc),
+            "assigned_to": None,
+            "context": context or {},
+            "messages": []
+        }
+        
+        escalations_collection.insert_one(escalation_doc)
+        print(f"🚨 Escalation created: {escalation_id} with priority {priority}")
+        
+        # Schedule async notification
+        try:
+            # Try to get existing loop or run a new one if none exists
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(manager.broadcast_to_agents({
+                    "type": "new_escalation",
+                    "escalation": {
+                        "escalation_id": escalation_id,
+                        "user_id": user_id,
+                        "reason": reason,
+                        "priority": priority,
+                        "created_at": datetime.now(timezone.utc).isoformat()
+                    }
+                }))
+            else:
+                 loop.run_until_complete(manager.broadcast_to_agents({
+                    "type": "new_escalation",
+                    "escalation": {
+                        "escalation_id": escalation_id,
+                        "user_id": user_id,
+                        "reason": reason,
+                        "priority": priority,
+                        "created_at": datetime.now(timezone.utc).isoformat()
+                    }
+                }))
+        except RuntimeError:
+             # This can happen if no event loop is set for the current thread
+             # In a production server (like gunicorn/uvicorn), this is less likely
+             print(f"⚠️ Could not send broadcast notification: No event loop.")
+        except Exception as e:
+            print(f"⚠️ Could not send broadcast notification: {e}")
+        
+        return escalation_id
+    
+    except Exception as e:
+        print(f"❌ Error creating escalation: {e}")
+        traceback.print_exc()
+        return escalation_id
+
+
+def get_escalation(escalation_id):
+    """Retrieve escalation details"""
+    if not mongo_connected or escalations_collection is None:
+        return None
+    
+    try:
+        return escalations_collection.find_one({"escalation_id": escalation_id})
+    except Exception as e:
+        print(f"❌ Error fetching escalation: {e}")
+        return None
+
+
+def add_agent_message(escalation_id, agent_id, message):
+    """Add agent message to escalation"""
+    if not mongo_connected or escalations_collection is None:
+        return False
+    
+    try:
+        escalations_collection.update_one(
+            {"escalation_id": escalation_id},
+            {
+                "$push": {
+                    "messages": {
+                        "sender": "agent",
+                        "agent_id": agent_id,
+                        "message": message,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }
+                }
+            }
+        )
+        print(f"💾 Agent message saved to {escalation_id}")
+        return True
+    except Exception as e:
+        print(f"❌ Error adding agent message: {e}")
+        return False
+
+
+def add_user_message(escalation_id, message):
+    """Add user message to escalation"""
+    if not mongo_connected or escalations_collection is None:
+        return False
+    
+    try:
+        escalations_collection.update_one(
+            {"escalation_id": escalation_id},
+            {
+                "$push": {
+                    "messages": {
+                        "sender": "user",
+                        "message": message,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }
+                }
+            }
+        )
+        print(f"💾 User message saved to {escalation_id}")
+        return True
+    except Exception as e:
+        print(f"❌ Error adding user message: {e}")
+        return False
+
+
+def close_escalation(escalation_id, resolution):
+    """Close an escalation"""
+    if not mongo_connected or escalations_collection is None:
+        return False
+    
+    try:
+        escalations_collection.update_one(
+            {"escalation_id": escalation_id},
+            {
+                "$set": {
+                    "status": "closed",
+                    "closed_at": datetime.now(timezone.utc),
+                    "resolution": resolution
+                }
+            }
+        )
+        print(f"✅ Escalation {escalation_id} closed")
+        return True
+    except Exception as e:
+        print(f"❌ Error closing escalation: {e}")
+        return False
+
+
+# ==================== WEBSOCKET ENDPOINTS ====================
+
+@router.websocket("/ws/user/{user_id}")
+async def websocket_user_endpoint(websocket: WebSocket, user_id: str):
+    """WebSocket for real-time escalation messages for users"""
+    await manager.connect_user(user_id, websocket)
+    
+    try:
+        while True:
+            try:
+                # Check if websocket is still connected before receiving
+                if websocket.client_state.value != 1:  # 1 = CONNECTED
+                    print(f"⚠️ WebSocket for user {user_id} is not in CONNECTED state")
+                    break
+                
+                data = await websocket.receive_text()
+                message_data = json.loads(data)
+                print(f"📨 Received from user {user_id}: {message_data.get('type')}")
+                
+                if message_data.get("type") == "ping":
+                    await websocket.send_json({"type": "pong"})
+                    continue
+                
+                if message_data.get("type") == "message":
+                    escalation_id = message_data.get("escalation_id")
+                    user_message = message_data.get("message")
+                    
+                    if not escalation_id or not user_message:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Missing escalation_id or message"
+                        })
+                        continue
+                    
+                    # Get escalation to find assigned agent
+                    escalation = get_escalation(escalation_id)
+                    if not escalation:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Escalation not found"
+                        })
+                        continue
+                    
+                    # Save user message to escalation
+                    add_user_message(escalation_id, user_message)
+                    
+                    # Send to assigned agent if connected
+                    if escalation.get("assigned_to"):
+                        sent = await manager.send_to_agent(escalation["assigned_to"], {
+                            "type": "user_message",
+                            "escalation_id": escalation_id,
+                            "message": user_message,
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        })
+                        if sent:
+                            print(f"✅ Message forwarded to agent {escalation['assigned_to']}")
+                    else:
+                        print(f"⚠️ No agent assigned to escalation {escalation_id}")
+                    
+                    # Acknowledge receipt
+                    await websocket.send_json({
+                        "type": "ack",
+                        "message": "Message received"
+                    })
+                    
+            except json.JSONDecodeError as e:
+                print(f"❌ JSON decode error from user {user_id}: {e}")
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Invalid JSON format"
+                    })
+                except:
+                    break
+            except RuntimeError as e:
+                # This catches "Cannot call receive once a disconnect message has been received"
+                if "disconnect message has been received" in str(e):
+                    print(f"🔌 User {user_id} WebSocket received disconnect message")
+                    break
+                else:
+                    print(f"❌ RuntimeError for user {user_id}: {e}")
+                    traceback.print_exc()
+                    break
+            except Exception as e:
+                print(f"❌ Error processing message from user {user_id}: {e}")
+                traceback.print_exc()
+                # Don't break on general exceptions, but check connection state
+                if websocket.client_state.value != 1:
+                    break
+    
+    except WebSocketDisconnect:
+        manager.disconnect_user(user_id)
+        print(f"🔌 User {user_id} disconnected normally")
+    except Exception as e:
+        print(f"❌ WebSocket error for user {user_id}: {e}")
+        traceback.print_exc()
+        manager.disconnect_user(user_id)
+
+
+@router.websocket("/ws/agent/{agent_id}")
+async def websocket_agent_endpoint(websocket: WebSocket, agent_id: str):
+    """WebSocket for real-time escalation messages for agents"""
+    await manager.connect_agent(agent_id, websocket)
+    
+    try:
+        while True:
+            try:
+                # Check if websocket is still connected before receiving
+                if websocket.client_state.value != 1:  # 1 = CONNECTED
+                    print(f"⚠️ WebSocket for agent {agent_id} is not in CONNECTED state")
+                    break
+                
+                data = await websocket.receive_text()
+                message_data = json.loads(data)
+                print(f"📨 Received from agent {agent_id}: {message_data.get('type')}")
+                
+                if message_data.get("type") == "ping":
+                    await websocket.send_json({"type": "pong"})
+                    continue
+                
+                if message_data.get("type") == "message":
+                    escalation_id = message_data.get("escalation_id")
+                    agent_message = message_data.get("message")
+                    
+                    if not escalation_id or not agent_message:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Missing escalation_id or message"
+                        })
+                        continue
+                    
+                    # Get escalation to find user
+                    escalation = get_escalation(escalation_id)
+                    if not escalation:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Escalation not found"
+                        })
+                        continue
+                    
+                    # Save agent message to escalation
+                    add_agent_message(escalation_id, agent_id, agent_message)
+                    
+                    # Send to user if connected
+                    sent = await manager.send_to_user(escalation["user_id"], {
+                        "type": "agent_message",
+                        "escalation_id": escalation_id,
+                        "message": agent_message,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                    
+                    # Acknowledge receipt
+                    await websocket.send_json({
+                        "type": "ack",
+                        "message": "Message sent to user" if sent else "User not connected, message saved"
+                    })
+                    
+            except json.JSONDecodeError as e:
+                print(f"❌ JSON decode error from agent {agent_id}: {e}")
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Invalid JSON format"
+                    })
+                except:
+                    break
+            except RuntimeError as e:
+                # This catches "Cannot call receive once a disconnect message has been received"
+                if "disconnect message has been received" in str(e):
+                    print(f"🔌 Agent {agent_id} WebSocket received disconnect message")
+                    break
+                else:
+                    print(f"❌ RuntimeError for agent {agent_id}: {e}")
+                    traceback.print_exc()
+                    break
+            except Exception as e:
+                print(f"❌ Error processing message from agent {agent_id}: {e}")
+                traceback.print_exc()
+                # Don't break on general exceptions, but check connection state
+                if websocket.client_state.value != 1:
+                    break
+    
+    except WebSocketDisconnect:
+        manager.disconnect_agent(agent_id)
+        print(f"🔌 Agent {agent_id} disconnected normally")
+    except Exception as e:
+        print(f"❌ WebSocket error for agent {agent_id}: {e}")
+        traceback.print_exc()
+        manager.disconnect_agent(agent_id)
+
+
+# ==================== REST API ENDPOINTS ====================
 
 @router.post("/escalate")
-async def escalate_conversation(escalation_req: EscalationRequest, current_user: dict = Depends(get_current_user)):
+async def escalate_conversation(current_user: dict = Depends(get_current_user)):
+    """Escalate current conversation to human agent"""
+    if not mongo_connected:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    
     try:
-        user = users_collection.find_one({"email": current_user["email"]})
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        try:
-            recent_messages = list(messages_collection.find({"user_id": user["user_id"]}).sort("timestamp", -1).limit(20))
-        except Exception as e:
-            print(f"Error fetching messages: {e}")
-            recent_messages = []
-
-        try:
-            orders = list(orders_col.find({"user_id": user["user_id"]}).sort("order_date", -1).limit(5))
-        except Exception as e:
-            print(f"Error fetching orders: {e}")
-            orders = []
-
-        try:
-            refunds = list(refunds_col.find({"user_id": user["user_id"]}).sort("request_time", -1).limit(5))
-        except Exception as e:
-            print(f"Error fetching refunds: {e}")
-            refunds = []
-
-        context = {
-            "user_name": user.get("name", "Unknown"),
-            "user_email": user.get("email", "Unknown"),
-            "recent_messages": [
-                {
-                    "role": "user" if i % 2 == 0 else "bot",
-                    "content": msg.get("user", "") if i % 2 == 0 else msg.get("bot", ""),
-                    "timestamp": msg.get("timestamp", datetime.now(timezone.utc)).isoformat() if hasattr(msg.get("timestamp", datetime.now(timezone.utc)), "isoformat") else str(msg.get("timestamp", ""))
-                } for i, msg in enumerate(recent_messages[::-1])
-            ],
-            "recent_orders": [
-                {
-                    "order_id": o.get("order_id", ""), 
-                    "restaurant": o.get("restaurant", ""), 
-                    "status": o.get("status", ""), 
-                    "total_amount": o.get("total_amount", 0)
-                } for o in orders
-            ],
-            "recent_refunds": [
-                {
-                    "refund_id": r.get("refund_id", ""), 
-                    "order_id": r.get("order_id", ""), 
-                    "amount": r.get("amount", 0), 
-                    "status": r.get("status", "")
-                } for r in refunds
-            ]
-        }
-
-        escalation_id = create_escalation(user["user_id"], escalation_req.reason, context)
-
-        available_agents = get_available_agents()
-        if available_agents:
-            agent = available_agents[0]
-            await assign_escalation_to_agent(escalation_id, agent["user_id"])
-
+        # Corrected relative import
+        from .database import get_or_create_user
+        
+        user = get_or_create_user(
+            current_user["email"],
+            current_user.get("name"),
+            current_user.get("role", "user")
+        )
+        
+        if not user or "user_id" not in user:
+            raise HTTPException(status_code=500, detail="User not found")
+        
+        # Use async version to properly send notifications
+        escalation_id = await create_escalation_async(
+            user["user_id"],
+            "User requested to speak with support agent",
+            {"user_email": current_user["email"], "user_name": current_user.get("name")},
+            priority="medium"
+        )
+        
         return {
             "escalation_id": escalation_id,
-            "status": "created",
-            "message": "Your issue has been escalated to a human agent. Please wait for assistance."
+            "status": "escalated",
+            "message": "Your case has been escalated. A support agent will assist you shortly."
         }
-    except HTTPException:
-        raise
+    
     except Exception as e:
-        print(f"Escalation error: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        print(f"❌ Escalation error: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to escalate conversation")
+
 
 @router.get("/escalations/my")
-async def get_my_escalations(current_user: dict = Depends(get_current_user)):
+def get_my_escalations(current_user: dict = Depends(get_current_user)):
+    """Get user's escalations"""
+    if not mongo_connected:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    
     try:
-        user = users_collection.find_one({"email": current_user["email"]})
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+        # Corrected relative import
+        from .database import get_or_create_user
         
-        user_escalations = []
+        user = get_or_create_user(
+            current_user["email"],
+            current_user.get("name"),
+            current_user.get("role", "user")
+        )
         
-        for esc in active_escalations.values():
-            if esc.get("user_id") == user.get("user_id"):
-                user_escalations.append(convert_objectid(esc))
+        if not user or "user_id" not in user:
+            raise HTTPException(status_code=500, detail="User not found")
         
-        from .config import db
-        if db is not None:
-            try:
-                db_escalations = list(db["escalations"].find({"user_id": user.get("user_id")}))
-                for esc in db_escalations:
-                    if not any(e.get("escalation_id") == esc.get("escalation_id") for e in user_escalations):
-                        user_escalations.append(convert_objectid(esc))
-            except Exception as e:
-                print(f"Error fetching from DB: {e}")
+        escalations = list(escalations_collection.find(
+            {"user_id": user["user_id"]}
+        ).sort("created_at", -1))
         
-        return {"escalations": user_escalations}
-    except HTTPException:
-        raise
+        result = []
+        for esc in escalations:
+            esc["_id"] = str(esc.get("_id", ""))
+            if hasattr(esc.get("created_at"), "isoformat"):
+                esc["created_at"] = esc["created_at"].isoformat()
+            if hasattr(esc.get("closed_at"), "isoformat"):
+                esc["closed_at"] = esc["closed_at"].isoformat()
+            result.append(esc)
+        
+        return {"escalations": result, "total": len(result)}
+    
     except Exception as e:
-        print(f"Error in get_my_escalations: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        print(f"❌ Get my escalations error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch escalations")
+
 
 @router.get("/escalations/pending")
-async def get_pending_escalations(current_user: dict = Depends(require_support_or_admin)):
+def get_pending_escalations(current_user: dict = Depends(get_current_user)):
+    """Get pending escalations (unassigned)"""
+    if not mongo_connected:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    
+    role = current_user.get("role", "user")
+    if role not in ["customer_support_agent", "admin"]:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    
     try:
-        from .config import db
-        escalations = []
+        escalations = list(escalations_collection.find({
+            "status": "open",
+            "assigned_to": None
+        }).sort("created_at", -1))
         
-        for esc in active_escalations.values():
-            if esc.get("status") == "pending":
-                escalations.append(convert_objectid(esc))
+        result = []
+        for esc in escalations:
+            esc["_id"] = str(esc.get("_id", ""))
+            if hasattr(esc.get("created_at"), "isoformat"):
+                esc["created_at"] = esc["created_at"].isoformat()
+            if hasattr(esc.get("closed_at"), "isoformat"):
+                esc["closed_at"] = esc["closed_at"].isoformat()
+            result.append(esc)
         
-        if db is not None:
-            try:
-                db_escalations = list(db["escalations"].find({"status": "pending"}))
-                for esc in db_escalations:
-                    if not any(e.get("escalation_id") == esc.get("escalation_id") for e in escalations):
-                        escalations.append(convert_objectid(esc))
-            except Exception as e:
-                print(f"Error fetching pending from DB: {e}")
-
-        priority_order = {"critical": 0, "high": 1, "medium": 2}
-        escalations.sort(key=lambda x: priority_order.get(x.get("priority", "medium"), 3))
-        
-        return {"escalations": escalations, "count": len(escalations)}
+        return {"escalations": result, "total": len(result)}
+    
     except Exception as e:
-        print(f"Error in get_pending_escalations: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        print(f"❌ Get pending escalations error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch pending escalations")
+
 
 @router.get("/escalations/assigned")
-async def get_assigned_escalations(current_user: dict = Depends(require_support_or_admin)):
+def get_assigned_escalations(current_user: dict = Depends(get_current_user)):
+    """Get escalations assigned to current agent"""
+    if not mongo_connected:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    
+    role = current_user.get("role", "user")
+    if role not in ["customer_support_agent", "admin"]:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    
     try:
-        user = users_collection.find_one({"email": current_user["email"]})
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        from .config import db
-        escalations = []
+        # Corrected relative import
+        from .database import get_or_create_user
         
-        for esc in active_escalations.values():
-            if esc.get("assigned_agent_id") == user.get("user_id") and esc.get("status") == "assigned":
-                escalations.append(convert_objectid(esc))
+        user = get_or_create_user(
+            current_user["email"],
+            current_user.get("name"),
+            current_user.get("role", "user")
+        )
         
-        if db is not None:
-            try:
-                db_escalations = list(db["escalations"].find({
-                    "assigned_agent_id": user.get("user_id"), 
-                    "status": "assigned"
-                }))
-                for esc in db_escalations:
-                    if not any(e.get("escalation_id") == esc.get("escalation_id") for e in escalations):
-                        escalations.append(convert_objectid(esc))
-            except Exception as e:
-                print(f"Error fetching assigned from DB: {e}")
-
-        return {"escalations": escalations, "count": len(escalations)}
-    except HTTPException:
-        raise
+        if not user or "user_id" not in user:
+            raise HTTPException(status_code=500, detail="User not found")
+        
+        escalations = list(escalations_collection.find({
+            "assigned_to": user["user_id"],
+            "status": {"$ne": "closed"}
+        }).sort("created_at", -1))
+        
+        result = []
+        for esc in escalations:
+            esc["_id"] = str(esc.get("_id", ""))
+            if hasattr(esc.get("created_at"), "isoformat"):
+                esc["created_at"] = esc["created_at"].isoformat()
+            if hasattr(esc.get("closed_at"), "isoformat"):
+                esc["closed_at"] = esc["closed_at"].isoformat()
+            result.append(esc)
+        
+        return {"escalations": result, "total": len(result)}
+    
     except Exception as e:
-        print(f"Error in get_assigned_escalations: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        print(f"❌ Get assigned escalations error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch assigned escalations")
 
-@router.post("/escalations/{escalation_id}/claim")
-async def claim_escalation(escalation_id: str, current_user: dict = Depends(require_support_or_admin)):
+
+@router.get("/escalations")
+def get_all_escalations(current_user: dict = Depends(get_current_user)):
+    """Get all escalations (support agents and admins only)"""
+    if not mongo_connected:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    
+    role = current_user.get("role", "user")
+    if role not in ["customer_support_agent", "admin"]:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    
     try:
-        user = users_collection.find_one({"email": current_user["email"]})
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+        escalations = list(escalations_collection.find().sort("created_at", -1))
         
-        from .config import db
+        result = []
+        for esc in escalations:
+            esc["_id"] = str(esc.get("_id", ""))
+            if hasattr(esc.get("created_at"), "isoformat"):
+                esc["created_at"] = esc["created_at"].isoformat()
+            if hasattr(esc.get("closed_at"), "isoformat"):
+                esc["closed_at"] = esc["closed_at"].isoformat()
+            result.append(esc)
         
-        escalation = None
-        if escalation_id in active_escalations:
-            escalation = active_escalations[escalation_id]
-        elif db is not None:
-            escalation = db["escalations"].find_one({"escalation_id": escalation_id})
-            if escalation:
-                active_escalations[escalation_id] = escalation
-        
+        return {"escalations": result, "total": len(result)}
+    
+    except Exception as e:
+        print(f"❌ Get all escalations error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch escalations")
+
+
+@router.get("/{escalation_id}")
+def get_escalation_details(escalation_id: str, current_user: dict = Depends(get_current_user)):
+    """Get specific escalation details"""
+    if not mongo_connected:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    
+    try:
+        escalation = get_escalation(escalation_id)
         if not escalation:
             raise HTTPException(status_code=404, detail="Escalation not found")
         
-        if escalation.get("status") != "pending":
-            raise HTTPException(status_code=400, detail="Escalation is not available to claim")
+        role = current_user.get("role", "user")
+        # Corrected relative import
+        from .database import get_or_create_user
+        user = get_or_create_user(current_user["email"], current_user.get("name"), role)
         
-        success = await assign_escalation_to_agent(escalation_id, user.get("user_id"))
+        if role == "user" and escalation["user_id"] != user.get("user_id"):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
         
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to assign escalation")
+        escalation["_id"] = str(escalation.get("_id", ""))
+        if hasattr(escalation.get("created_at"), "isoformat"):
+            escalation["created_at"] = escalation["created_at"].isoformat()
+        if hasattr(escalation.get("closed_at"), "isoformat"):
+            escalation["closed_at"] = escalation["closed_at"].isoformat()
         
-        return {
-            "message": "Escalation claimed successfully",
-            "escalation_id": escalation_id,
-            "agent_id": user.get("user_id")
-        }
+        return escalation
+    
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error in claim_escalation: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        print(f"❌ Get escalation details error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch escalation")
+
 
 @router.get("/messages/{escalation_id}")
-async def get_escalation_messages(
-    escalation_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Get message history for an escalation"""
+def get_escalation_messages(escalation_id: str, current_user: dict = Depends(get_current_user)):
+    """Get messages for an escalation"""
+    if not mongo_connected:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    
     try:
-        messages = list(messages_collection.find({
-            "escalation_id": escalation_id
-        }).sort("timestamp", 1))
+        escalation = get_escalation(escalation_id)
+        if not escalation:
+            raise HTTPException(status_code=404, detail="Escalation not found")
         
-        formatted_messages = []
-        for msg in messages:
-            formatted_messages.append({
-                "sender": msg.get("sender"),
-                "message": msg.get("message"),
-                "timestamp": msg.get("timestamp").isoformat() if hasattr(msg.get("timestamp"), 'isoformat') else str(msg.get("timestamp"))
-            })
+        role = current_user.get("role", "user")
+        # Corrected relative import
+        from .database import get_or_create_user
+        user = get_or_create_user(current_user["email"], current_user.get("name"), role)
         
-        return {"messages": formatted_messages, "count": len(formatted_messages)}
+        if role == "user" and escalation["user_id"] != user.get("user_id"):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        
+        return {"messages": escalation.get("messages", [])}
+    
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Error fetching escalation messages: {e}")
+        print(f"❌ Get escalation messages error: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch messages")
-    
-@router.post("/escalations/{escalation_id}/resolve")
-async def resolve_escalation(
-    escalation_id: str,
-    resolution: dict,
-    current_user: dict = Depends(require_support_or_admin)
-):
-    try:
-        from .config import db
-        
-        if escalation_id in active_escalations:
-            active_escalations[escalation_id]["status"] = "resolved"
-            active_escalations[escalation_id]["resolved_at"] = datetime.now(timezone.utc).isoformat()
-            active_escalations[escalation_id]["resolution"] = resolution
-        
-        if db is not None:
-            db["escalations"].update_one(
-                {"escalation_id": escalation_id},
-                {"$set": {
-                    "status": "resolved",
-                    "resolved_at": datetime.now(timezone.utc).isoformat(),
-                    "resolution": resolution
-                }}
-            )
-        
-        return {"message": "Escalation resolved successfully", "escalation_id": escalation_id}
-    except Exception as e:
-        print(f"Error in resolve_escalation: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-# ----------------- WebSocket Endpoints -----------------
 
-@router.websocket("/ws/agent/{agent_id}")
-async def agent_websocket(websocket: WebSocket, agent_id: str):
-    await websocket.accept()
-    agent_connections[agent_id] = websocket
-    print(f"Agent {agent_id} connected to WebSocket")
-    
-    # Heartbeat task
-    async def send_heartbeat():
-        while True:
-            try:
-                if websocket.client_state.value == 1:  # Connected
-                    await websocket.send_json({"type": "ping"})
-                await asyncio.sleep(30)
-            except:
-                break
-    
-    heartbeat_task = asyncio.create_task(send_heartbeat())
+@router.post("/{escalation_id}/message")
+async def send_escalation_message(escalation_id: str, message: str = Query(...), current_user: dict = Depends(get_current_user)):
+    """Send message in escalation (agent or user)"""
+    if not mongo_connected:
+        raise HTTPException(status_code=503, detail="Database unavailable")
     
     try:
-        while True:
-            data = await websocket.receive_json()
-            print(f"Agent {agent_id} sent: {data}")
-            
-            if data.get("type") == "pong":
-                continue
-            
-            if data.get("type") == "message":
-                escalation_id = data.get("escalation_id")
-                message = data.get("message")
-                
-                if escalation_id not in active_escalations:
-                    from .config import db
-                    if db is not None:
-                        escalation = db["escalations"].find_one({"escalation_id": escalation_id})
-                        if escalation:
-                            active_escalations[escalation_id] = escalation
-                        else:
-                            await websocket.send_json({
-                                "type": "error",
-                                "message": "Escalation not found"
-                            })
-                            continue
-                    else:
-                        await websocket.send_json({
-                            "type": "error",
-                            "message": "Database unavailable"
-                        })
-                        continue
-                
-                escalation = active_escalations[escalation_id]
-                
-                if escalation.get("assigned_agent_id") != agent_id:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": "You are not assigned to this escalation"
-                    })
-                    continue
-                
-                user_id = escalation.get("user_id")
-
-                msg_doc = {
+        escalation = get_escalation(escalation_id)
+        if not escalation:
+            raise HTTPException(status_code=404, detail="Escalation not found")
+        
+        role = current_user.get("role", "user")
+        # Corrected relative import
+        from .database import get_or_create_user
+        user = get_or_create_user(current_user["email"], current_user.get("name"), role)
+        
+        if role == "user" and escalation["user_id"] != user.get("user_id"):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        
+        if role in ["customer_support_agent", "admin"]:
+            add_agent_message(escalation_id, user.get("user_id"), message)
+            # Send to user via WebSocket
+            await manager.send_to_user(escalation["user_id"], {
+                "type": "agent_message",
+                "escalation_id": escalation_id,
+                "message": message,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+        else:
+            add_user_message(escalation_id, message)
+            # Send to agent via WebSocket
+            if escalation.get("assigned_to"):
+                await manager.send_to_agent(escalation["assigned_to"], {
+                    "type": "user_message",
                     "escalation_id": escalation_id,
-                    "user_id": user_id,
-                    "agent_id": agent_id,
-                    "sender": "agent",
                     "message": message,
-                    "timestamp": datetime.now(timezone.utc)
-                }
-                
-                try:
-                    messages_collection.insert_one(msg_doc)
-                    print(f"Saved agent message to database")
-                except Exception as e:
-                    print(f"Error saving message: {e}")
-
-                if user_id in user_connections:
-                    try:
-                        await user_connections[user_id].send_json({
-                            "type": "agent_message",
-                            "escalation_id": escalation_id,
-                            "message": message,
-                            "timestamp": msg_doc["timestamp"].isoformat()
-                        })
-                        print(f"Message delivered to user {user_id}")
-                    except Exception as e:
-                        print(f"Error sending to user: {e}")
-                else:
-                    print(f"User {user_id} not connected")
-
-                await websocket.send_json({
-                    "type": "message_sent",
-                    "escalation_id": escalation_id,
-                    "timestamp": msg_doc["timestamp"].isoformat()
+                    "timestamp": datetime.now(timezone.utc).isoformat()
                 })
-                
-    except WebSocketDisconnect:
-        print(f"Agent {agent_id} disconnected")
+        
+        return {"status": "sent", "message": "Message added to escalation"}
+    
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"WebSocket error for agent {agent_id}: {e}")
-    finally:
-        heartbeat_task.cancel()
-        if agent_id in agent_connections:
-            del agent_connections[agent_id]
+        print(f"❌ Send escalation message error: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to send message")
 
 
-@router.websocket("/ws/user/{user_id}")
-async def user_websocket(websocket: WebSocket, user_id: str):
-    await websocket.accept()
-    user_connections[user_id] = websocket
-    print(f"User {user_id} connected to WebSocket")
+@router.post("/{escalation_id}/assign")
+async def assign_escalation(escalation_id: str, current_user: dict = Depends(get_current_user)):
+    """Assign escalation to current agent"""
+    if not mongo_connected:
+        raise HTTPException(status_code=503, detail="Database unavailable")
     
-    # Heartbeat task
-    async def send_heartbeat():
-        while True:
-            try:
-                if websocket.client_state.value == 1:
-                    await websocket.send_json({"type": "ping"})
-                await asyncio.sleep(30)
-            except:
-                break
-    
-    heartbeat_task = asyncio.create_task(send_heartbeat())
+    role = current_user.get("role", "user")
+    if role not in ["customer_support_agent", "admin"]:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
     
     try:
-        while True:
-            data = await websocket.receive_json()
-            print(f"User {user_id} sent: {data}")
-            
-            if data.get("type") == "pong":
-                continue
-            
-            if data.get("type") == "message":
-                escalation_id = data.get("escalation_id")
-                message = data.get("message")
-                
-                if escalation_id not in active_escalations:
-                    from .config import db
-                    if db is not None:
-                        escalation = db["escalations"].find_one({"escalation_id": escalation_id})
-                        if escalation:
-                            active_escalations[escalation_id] = escalation
-                        else:
-                            await websocket.send_json({
-                                "type": "error",
-                                "message": "Escalation not found"
-                            })
-                            continue
-                    else:
-                        await websocket.send_json({
-                            "type": "error",
-                            "message": "Database unavailable"
-                        })
-                        continue
-                
-                escalation = active_escalations[escalation_id]
-                
-                if escalation.get("user_id") != user_id:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": "This is not your escalation"
-                    })
-                    continue
-                
-                agent_id = escalation.get("assigned_agent_id")
-
-                msg_doc = {
-                    "escalation_id": escalation_id,
-                    "user_id": user_id,
-                    "agent_id": agent_id,
-                    "sender": "user",
-                    "message": message,
-                    "timestamp": datetime.now(timezone.utc)
-                }
-                
-                try:
-                    messages_collection.insert_one(msg_doc)
-                    print(f"Saved user message to database")
-                except Exception as e:
-                    print(f"Error saving message: {e}")
-
-                # CRITICAL FIX: Send to agent
-                if agent_id and agent_id in agent_connections:
-                    try:
-                        await agent_connections[agent_id].send_json({
-                            "type": "user_message",
-                            "escalation_id": escalation_id,
-                            "user_id": user_id,
-                            "message": message,
-                            "timestamp": msg_doc["timestamp"].isoformat()
-                        })
-                        print(f"Message delivered to agent {agent_id}")
-                    except Exception as e:
-                        print(f"Error sending to agent: {e}")
-                        if agent_id in agent_connections:
-                            del agent_connections[agent_id]
-                else:
-                    print(f"No agent assigned or agent not connected")
-
-                await websocket.send_json({
-                    "type": "message_sent",
-                    "escalation_id": escalation_id,
-                    "timestamp": msg_doc["timestamp"].isoformat()
-                })
-                
-    except WebSocketDisconnect:
-        print(f"User {user_id} disconnected")
+        # Corrected relative import
+        from .database import get_or_create_user
+        
+        user = get_or_create_user(
+            current_user["email"],
+            current_user.get("name"),
+            current_user.get("role", "user")
+        )
+        
+        if not user or "user_id" not in user:
+            raise HTTPException(status_code=500, detail="User not found")
+        
+        escalation = get_escalation(escalation_id)
+        if not escalation:
+            raise HTTPException(status_code=404, detail="Escalation not found")
+        
+        if escalation.get("assigned_to") and escalation["assigned_to"] != user["user_id"]:
+            raise HTTPException(status_code=400, detail="Escalation already assigned to another agent")
+        
+        escalations_collection.update_one(
+            {"escalation_id": escalation_id},
+            {"$set": {
+                "assigned_to": user["user_id"],
+                "assigned_at": datetime.now(timezone.utc)
+            }}
+        )
+        
+        # Notify user that agent has joined
+        await manager.send_to_user(escalation["user_id"], {
+            "type": "escalation_assigned",
+            "escalation_id": escalation_id,
+            "agent_name": user.get("name", "Support Agent"),
+            "message": f"{user.get('name', 'Support Agent')} has joined the chat"
+        })
+        
+        return {"status": "assigned", "message": f"Escalation assigned to {user.get('name', 'agent')}"}
+    
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"WebSocket error for user {user_id}: {e}")
-    finally:
-        heartbeat_task.cancel()
-        if user_id in user_connections:
-            del user_connections[user_id]
+        print(f"❌ Assign escalation error: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to assign escalation")
+
+
+@router.post("/{escalation_id}/close")
+def close_escalation_endpoint(escalation_id: str, resolution: str = Query(...), current_user: dict = Depends(get_current_user)):
+    """Close an escalation (support agents and admins only)"""
+    if not mongo_connected:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    
+    role = current_user.get("role", "user")
+    if role not in ["customer_support_agent", "admin"]:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    
+    try:
+        if close_escalation(escalation_id, resolution):
+            return {"status": "closed", "message": "Escalation closed successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to close escalation")
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Close escalation error: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to close escalation")

@@ -4,16 +4,16 @@ from .config import db, mongo_connected
 def get_faq_context():
     """Return FAQ context dynamically from database"""
     if not mongo_connected or db is None:
-        return "Use general knowledge to help users with food delivery questions."
+        return "Use general knowledge to help users with banking questions."
     
     try:
         faq_collection = db["faqs"]
         faqs = list(faq_collection.find({"is_active": True}))
         
         if not faqs:
-            return "No FAQs available. Use general knowledge."
+            return "No FAQs available. Use general banking knowledge."
         
-        context = "FOOD DELIVERY PLATFORM FAQ KNOWLEDGE:\n\n"
+        context = "BANKING SUPPORT FAQ KNOWLEDGE:\n\n"
         
         for faq in faqs:
             context += f"Q: {faq['question']}\n"
@@ -26,7 +26,7 @@ def get_faq_context():
         
     except Exception as e:
         print(f"Error loading FAQ context: {e}")
-        return "Use general knowledge."
+        return "Use general banking knowledge."
 
 
 def find_best_faq_match(user_message: str, intent: str):
