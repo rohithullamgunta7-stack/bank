@@ -47,7 +47,11 @@ web_modules/
 # TypeScript cache
 *.tsbuildinfo
 
+<<<<<<< HEAD
 # Optional npm cache
+=======
+# Optional npm cache directory
+>>>>>>> 122f55b7b7a2ce741bf800141a5e56883ee24ed2
 .npm
 
 # Optional eslint cache
@@ -137,7 +141,10 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+<<<<<<< HEAD
 
 # Media files
 *.mp4
 *.mov
+=======
+>>>>>>> 122f55b7b7a2ce741bf800141a5e56883ee24ed2
