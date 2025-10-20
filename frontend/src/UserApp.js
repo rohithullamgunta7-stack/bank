@@ -342,11 +342,22 @@
 
 
 
-
 import React, { useState, useEffect } from "react";
 import ChatWindow from "./ChatWindow";
-import API_BASE_URL from "./config"; // ✅ import your backend URL config
 import "./auth-styles.css";
+
+// HARDCODED FIX: Direct URL configuration
+const isLocal = window.location.hostname === "localhost" || 
+                window.location.hostname === "127.0.0.1";
+
+const BACKEND_URL = isLocal 
+  ? "http://127.0.0.1:8000"
+  : "https://bank-3-zgrw.onrender.com";
+
+console.log("🔧 UserApp Configuration:");
+console.log("  📍 Frontend hostname:", window.location.hostname);
+console.log("  🏠 Is Local:", isLocal);
+console.log("  🌐 Backend URL:", BACKEND_URL);
 
 function UserApp() {
   const [name, setName] = useState("");
@@ -376,13 +387,24 @@ function UserApp() {
     setIsLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/signup`, {
+      const url = `${BACKEND_URL}/auth/signup`;
+      console.log(`🚀 Signup request to: ${url}`);
+      
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, email, password, role: "user" }),
       });
 
-      const data = await res.json();
+      let data;
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        data = { 
+          detail: `Server returned ${res.status}: ${res.statusText}. Please check your API configuration.` 
+        };
+      }
 
       if (res.ok) {
         const receivedToken = data.access_token;
@@ -402,18 +424,18 @@ function UserApp() {
             .join(", ");
           alert(errors);
         } else {
-          alert(data.detail || "Signup failed");
+          alert(data.detail || `Signup failed with status ${res.status}`);
         }
       }
     } catch (err) {
       console.error("Signup error:", err);
-      alert("Server error. Please try again.");
+      alert(`Server error: ${err.message}. Backend might be sleeping or unavailable.`);
     } finally {
       setIsLoading(false);
     }
   };
 
- // ✅ Login
+  // ✅ Login
   const login = async () => {
     if (!email || !password) {
       alert("Email & Password required");
@@ -423,9 +445,10 @@ function UserApp() {
     setIsLoading(true);
 
     try {
-      console.log(`🚀 Sending login request to: ${BACKEND_URL}/auth/login`);
+      const url = `${BACKEND_URL}/auth/login`;
+      console.log(`🚀 Login request to: ${url}`);
       
-      const res = await fetch(`${BACKEND_URL}/auth/login`, {
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -434,13 +457,11 @@ function UserApp() {
         }),
       });
 
-      // Check if response has content before parsing JSON
       let data;
       const contentType = res.headers.get("content-type");
       if (contentType && contentType.includes("application/json")) {
         data = await res.json();
       } else {
-        // If no JSON, create error object with status info
         data = { 
           detail: `Server returned ${res.status}: ${res.statusText}. Please check your API configuration.` 
         };
@@ -463,7 +484,7 @@ function UserApp() {
       }
     } catch (err) {
       console.error("Login error:", err);
-      alert(`Server error: ${err.message}. Please check your backend is running and API_BASE_URL is correct.`);
+      alert(`Server error: ${err.message}. Backend might be sleeping or unavailable.`);
     } finally {
       setIsLoading(false);
     }
@@ -610,7 +631,7 @@ function UserApp() {
 
           <div className="trust-indicators">
             <div className="trust-item">
-              <span className="trust-icon">🔐</span>
+              <span className="trust-icon">🔒</span>
               <span className="trust-text">Secure</span>
             </div>
             <div className="trust-item">
@@ -689,7 +710,7 @@ function UserApp() {
           Sign Out
         </button>
       </div>
-      <ChatWindow token={token} />
+      <ChatWindow token={token} backendUrl={BACKEND_URL} />
     </div>
   );
 }
