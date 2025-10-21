@@ -931,7 +931,7 @@ if allowed_origins_env:
     # Parse comma-separated origins from environment variable
     ALLOWED_ORIGINS = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
 else:
-    ALLOWED_ORIGINS = [*]
+    ALLOWED_ORIGINS = ["*"]
     # Default development origins
     # ALLOWED_ORIGINS = [
     #     "http://localhost:3000",
