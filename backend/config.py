@@ -261,9 +261,6 @@
 # check_environment()
 
 
-
-
-
 import os
 import secrets
 import time
@@ -500,7 +497,7 @@ if connection_result:
     print("✅ System initialization complete!")
     print("="*60 + "\n")
 else:
-    print("="*6D)
+    print("="*60) # <-- THIS IS THE CORRECTED LINE (was 6D)
     print("❌ WARNING: System started without MongoDB connection!")
     print("="*60 + "\n")
 
