@@ -931,12 +931,13 @@ if allowed_origins_env:
     # Parse comma-separated origins from environment variable
     ALLOWED_ORIGINS = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
 else:
+    ALLOWED_ORIGINS = [*]
     # Default development origins
-    ALLOWED_ORIGINS = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "https://bank-lime-rho.vercel.app",  # Your production frontend
-    ]
+    # ALLOWED_ORIGINS = [
+    #     "http://localhost:3000",
+    #     "http://127.0.0.1:3000",
+    #     "https://bank-lime-rho.vercel.app",  # Your production frontend
+    # ]
 
 print(f"🌐 CORS Allowed Origins: {ALLOWED_ORIGINS}")
 
