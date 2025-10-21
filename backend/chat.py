@@ -1051,6 +1051,19 @@
 #     save_message(user_id, user_msg, bot_msg)
 #     return bot_msg
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 # import time
 # import re
 # import traceback
@@ -2139,24 +2152,22 @@
 
 
 
-
-
-
 import time
 import re
 import traceback
 from datetime import datetime, timezone, timedelta
 
 # Corrected relative imports
-from .database import load_chat_history, save_message, get_user_by_id, messages_collection
+from .database import load_chat_history, save_message, get_user_by_id, messages_collection, get_customer_by_user_id, block_card_temporary, unblock_card
 from .config import db, model
 from .escalation import should_escalate, create_escalation
 from .faq_context import get_faq_context
 
-# In-memory session cache (for chat history, NOT context)
+# In-memory session cache with context tracking
 session_cache = {}
+user_context = {}  # Track user's current context
 CACHE_DURATION = timedelta(minutes=15)
-CONTEXT_DURATION = timedelta(minutes=10) # How long a context is valid
+CONTEXT_DURATION = timedelta(minutes=10)
 
 # Initialize collections
 chat_sessions_collection = db["chat_sessions"] if db is not None else None
@@ -2165,92 +2176,38 @@ transactions_col = db["transactions"] if db is not None else None
 customers_col = db["customers"] if db is not None else None
 
 
-# ==============================================================
-# ==================== CONTEXT MANAGEMENT (FIXED) ====================
-#
-# These functions now store context in the `chat_sessions`
-# collection in MongoDB, solving multi-worker state bugs.
-# ==============================================================
+# ==================== CONTEXT MANAGEMENT ====================
 
 def set_user_context(user_id, context_type, context_data):
-    """Store user's current context in the database session."""
-    if not chat_sessions_collection:
-        print("Warning: Database not available for context")
-        return
-    
-    try:
-        session_id = get_or_create_session(user_id) # Get active session
-        context = {
-            "type": context_type,
-            "data": context_data,
-            "timestamp": datetime.now(timezone.utc)
-        }
-        chat_sessions_collection.update_one(
-            {"session_id": session_id},
-            {"$set": {"context": context}}
-        )
-        print(f"✅ Context SET for user {user_id} in session {session_id}: {context_type}")
-    except Exception as e:
-        print(f"Error setting user context in DB: {e}")
+    """Store user's current context (e.g., selected account)"""
+    print(f"[Context SET] User: {user_id} -> Type: {context_type}")
+    user_context[user_id] = {
+        "type": context_type,
+        "data": context_data,
+        "timestamp": datetime.now(timezone.utc)
+    }
 
 
 def get_user_context(user_id):
-    """Retrieve user's current context from the database session."""
-    if not chat_sessions_collection:
-        print("Warning: Database not available for context")
+    """Retrieve user's current context if not expired"""
+    if user_id not in user_context:
         return None
     
-    try:
-        session_id = get_or_create_session(user_id) # Get active session
-        session = chat_sessions_collection.find_one({"session_id": session_id})
-        
-        if not session or "context" not in session or not session["context"]:
-            # print(f"No context found for user {user_id} in session {session_id}")
-            return None
-        
-        context = session["context"]
-        
-        # Check if context is expired
-        context_timestamp = context.get("timestamp")
-        if not context_timestamp:
-             return None # Invalid context
-        
-        # Ensure timestamp is a datetime object
-        if not isinstance(context_timestamp, datetime):
-            try:
-                # Attempt to parse if stored as string (shouldn't happen with new code)
-                context_timestamp = datetime.fromisoformat(context_timestamp)
-            except:
-                 return None # Unparseable timestamp
-
-        if datetime.now(timezone.utc) - context_timestamp > CONTEXT_DURATION:
-            print(f"Context EXPIRED for user {user_id}")
-            clear_user_context(user_id) # Clear it from DB
-            return None
-        
-        print(f"✅ Context GET for user {user_id} in session {session_id}: {context.get('type')}")
-        return context
-        
-    except Exception as e:
-        print(f"Error getting user context from DB: {e}")
+    context = user_context[user_id]
+    if datetime.now(timezone.utc) - context["timestamp"] > CONTEXT_DURATION:
+        print(f"[Context EXPIRED] User: {user_id} -> Type: {context['type']}")
+        del user_context[user_id]
         return None
+    
+    # print(f"[Context GET] User: {user_id} -> Type: {context['type']}")
+    return context
 
 
 def clear_user_context(user_id):
-    """Clear user's context from the database session."""
-    if not chat_sessions_collection:
-        print("Warning: Database not available for context")
-        return
-        
-    try:
-        session_id = get_or_create_session(user_id) # Get active session
-        chat_sessions_collection.update_one(
-            {"session_id": session_id},
-            {"$set": {"context": None}}
-        )
-        print(f"✅ Context CLEARED for user {user_id} in session {session_id}")
-    except Exception as e:
-        print(f"Error clearing user context in DB: {e}")
+    """Clear user's context"""
+    if user_id in user_context:
+        print(f"[Context CLEAR] User: {user_id} -> Type: {user_context[user_id]['type']}")
+        del user_context[user_id]
 
 
 # ==================== TRANSACTION HISTORY ====================
@@ -2334,7 +2291,7 @@ def get_transaction_history(account_id, user_id):
         return "Error fetching transaction history. Please try again."
 
 
-# ==================== CACHE & SESSION MANAGEMENT (Existing) ====================
+# ==================== EXISTING FUNCTIONS ====================
 
 def get_cached_history(user_id, limit=30):
     """Retrieve recent conversation history from cache or database."""
@@ -2355,15 +2312,14 @@ def cleanup_cache():
     now = datetime.now(timezone.utc)
     expired = [uid for uid, (_, ts) in session_cache.items() if now - ts > CACHE_DURATION]
     for uid in expired:
-        if uid in session_cache:
-            del session_cache[uid]
+        del session_cache[uid]
 
 
 def invalidate_cache(user_id):
     """Clear cache when new message is saved."""
     if user_id in session_cache:
         del session_cache[user_id]
-        print(f"✅ History cache invalidated for user: {user_id}")
+        print(f"✅ Cache invalidated for user: {user_id}")
 
 
 def get_or_create_session(user_id: str) -> str:
@@ -2389,8 +2345,7 @@ def get_or_create_session(user_id: str) -> str:
         "end_time": None,
         "message_count": 0,
         "escalated": False,
-        "feedback_submitted": False,
-        "context": None # <-- ✅ Initialize context field
+        "feedback_submitted": False
     }
     chat_sessions_collection.insert_one(session_doc)
     return session_id
@@ -2440,9 +2395,14 @@ def classify_user_intent(user_msg, history, user_name="there"):
         return "ESCALATE_TO_AGENT"
     
     # Check for transaction-related keywords
-    transaction_keywords = ['transaction', 'history', 'statement', 'transactions', 'purchases', 'payments', 'transactons'] # Added common typo
+    transaction_keywords = ['transaction', 'history', 'statement', 'transactions', 'purchases', 'payments']
     if any(keyword in msg_lower for keyword in transaction_keywords):
         return "TRANSACTION_HISTORY"
+
+    # Check for account-related keywords
+    account_keywords = ['balance', 'account', 'accounts', 'money', 'savings', 'checking']
+    if any(keyword in msg_lower for keyword in account_keywords):
+        return "ACCOUNT_BALANCE" # Default to balance check
     
     if '?' in user_msg:
         pass
@@ -2453,6 +2413,8 @@ def classify_user_intent(user_msg, history, user_name="there"):
         for phrase in goodbye_starts:
             if msg_lower.startswith(phrase):
                 return "CONVERSATION_END"
+    
+    # === AI CLASSIFICATION FALLBACK ===
     
     last_bot_msg = ""
     if history and len(history) > 0:
@@ -2467,7 +2429,7 @@ Classify the user's PRIMARY INTENT into ONE category:
 
 GREETING - Starting conversation
 ACCOUNT_BALANCE - Wants to check account balance
-ACCOUNT_SELECTION - Selecting specific account
+ACCOUNT_SELECTION - User is providing a number or name to select an account from a list.
 TRANSACTION_HISTORY - Wants transaction history/statement
 ACCOUNT_DETAILS - Wants detailed account information
 CARD_BLOCK - Wants to block/freeze card (temporary or permanent)
@@ -2485,6 +2447,12 @@ Respond with ONLY the category name in uppercase."""
         response = model.generate_content(classification_prompt)
         intent = response.text.strip().upper().replace(" ", "_")
         print(f"[Intent] '{user_msg[:40]}...' -> {intent}")
+        
+        # ✅ FIX: If user just sends a number, classify it as ACCOUNT_SELECTION
+        if user_msg.strip().isdigit() and intent != "CONVERSATION_END":
+            print(f"[Intent Override] '{user_msg}' -> ACCOUNT_SELECTION")
+            return "ACCOUNT_SELECTION"
+            
         return intent
     except Exception as e:
         print(f"Intent classification error: {e}")
@@ -2644,7 +2612,6 @@ Opened On: {created_date}
 def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
     """Generate bot reply with context awareness"""
     max_retries = 2
-    # ✅ Get fresh history by loading from DB *after* cache invalidation
     history = get_cached_history(user_id, limit=30)
     user_info = get_user_by_id(user_id)
     user_name = user_info.get("name","there") if user_info else "there"
@@ -2655,16 +2622,17 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
     except Exception as e:
         print(f"Session tracking error: {e}")
 
-    # ✅ Get current context *from the database*
+    # Get current context
     context = get_user_context(user_id)
     
     # ==================== PRIORITY: Handle numeric selections in context ====================
-    # If user is in a selection context and sends a number, handle it immediately
+    # ✅ FIX: This block now handles ALL numeric selection contexts to avoid confusion
     if context and user_msg.strip().isdigit():
+        
+        # --- Handle Account Balance Selection ---
         if context["type"] == "account_balance_selection":
             try:
                 from bson import ObjectId
-                
                 user_info_data = get_user_by_id(user_id)
                 customer = customers_col.find_one({"email": user_info_data.get('email')})
                 
@@ -2675,18 +2643,18 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
                     if idx is not None and idx < len(accounts):
                         account_id = str(accounts[idx]['_id'])
                         bot_msg = get_specific_account_details(account_id, user_id)
-                        # DON'T clear context - keep it for follow-up actions like transaction history
+                        # Context is set to "selected_account" INSIDE get_specific_account_details
                         save_message(user_id, user_msg, bot_msg)
-                        invalidate_cache(user_id) # <-- ✅ FIX: Invalidate history cache
+                        invalidate_cache(user_id)
                         return bot_msg
             except Exception as e:
                 print(f"Error handling account selection: {e}")
                 traceback.print_exc()
         
+        # --- Handle Transaction History Selection ---
         elif context["type"] == "transaction_history_selection":
             try:
                 from bson import ObjectId
-                
                 user_info_data = get_user_by_id(user_id)
                 customer = customers_col.find_one({"email": user_info_data.get('email')})
                 
@@ -2706,257 +2674,258 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
                         
                         bot_msg = get_transaction_history(account_id, user_id)
                         save_message(user_id, user_msg, bot_msg)
-                        invalidate_cache(user_id) # <-- ✅ FIX: Invalidate history cache
+                        invalidate_cache(user_id)
                         return bot_msg
             except Exception as e:
                 print(f"Error handling transaction history selection: {e}")
                 traceback.print_exc()
+
+        # --- Handle Card Block Account Selection ---
+        elif context["type"] == "card_block_account_selection":
+            try:
+                user_info_data = get_user_by_id(user_id)
+                customer = customers_col.find_one({"email": user_info_data.get('email')})
+                
+                if customer:
+                    all_accounts = list(accounts_col.find({"customer_id": customer["_id"]}))
+                    card_accounts = [
+                        acc for acc in all_accounts 
+                        if acc.get('account_type') in ['Credit Card', 'Savings', 'Checking']
+                    ]
+                    
+                    idx = parse_selection_number(user_msg, len(card_accounts))
+                    if idx is not None and idx < len(card_accounts):
+                        account = card_accounts[idx]
+                        account_id = str(account['_id'])
+                        account_number = account.get('account_number', 'N/A')
+                        account_type = account.get('account_type', 'Account')
+                        
+                        if account_type == 'Credit Card':
+                            card_type = "Credit Card"
+                        elif account_type in ['Savings', 'Checking']:
+                            card_type = "Debit Card"
+                        else:
+                            card_type = "Card"
+                        
+                        set_user_context(user_id, "card_block_pending", {
+                            "account_id": account_id,
+                            "account_number": account_number,
+                            "account_type": account_type,
+                            "card_type": card_type
+                        })
+                        
+                        bot_msg = (
+                            f"You selected: {card_type} (Account: {account_number})\n\n"
+                            f"Please choose:\n"
+                            f"1️⃣ Temporary Block (you can unblock later)\n"
+                            f"2️⃣ Permanent Block (card will be cancelled)\n"
+                            f"3️⃣ Talk to Support Agent\n\n"
+                            f"Reply with 1, 2, or 3."
+                        )
+                        save_message(user_id, user_msg, bot_msg)
+                        invalidate_cache(user_id)
+                        return bot_msg
+            except Exception as e:
+                print(f"Error in card block selection: {e}")
+                traceback.print_exc()
+
+        # --- Handle Card Block Confirmation (1, 2, or 3) ---
+        elif context["type"] == "card_block_pending":
+            if user_msg.strip() in ["1", "2", "3"]:
+                card_type = context['data'].get('card_type', 'Card')
+                account_number = context['data']['account_number']
+                account_id = context['data']['account_id']
+                
+                if user_msg.strip() == "1":
+                    success, message = block_card_temporary(account_id)
+                    
+                    if success:
+                        bot_msg = (
+                            f"🔒 **CARD TEMPORARILY BLOCKED**\n\n"
+                            f"Your {card_type} (Account: {account_number}) is now blocked.\n\n"
+                            f"**What this means:**\n"
+                            f"❌ Cannot make purchases or withdrawals\n"
+                            f"❌ ATM transactions disabled\n"
+                            f"✅ Account balance is SAFE\n"
+                            f"✅ You can still receive deposits\n"
+                            f"✅ Can be unblocked anytime by YOU\n\n"
+                            f"**To unblock:**\n"
+                            f"• Tell me 'unblock my card'\n"
+                            f"• Use mobile app\n"
+                            f"• Call: 1-800-BANK-HELP\n"
+                            f"• Visit any branch\n\n"
+                            f"Is there anything else I can help you with?"
+                        )
+                    else:
+                        bot_msg = f"Sorry, I couldn't block the card. Error: {message}\n\nPlease try again or contact support."
+                    
+                    clear_user_context(user_id)
+                    save_message(user_id, user_msg, bot_msg)
+                    invalidate_cache(user_id)
+                    return bot_msg
+                
+                elif user_msg.strip() == "2":
+                    from bson import ObjectId
+                    account = accounts_col.find_one({"_id": ObjectId(account_id)})
+                    user_details = get_customer_by_user_id(user_id)
+                    if not user_details:
+                        user_details = user_info
+
+                    account_created_at = "N/A"
+                    if account and account.get('created_at'):
+                        try:
+                            if isinstance(account.get('created_at'), datetime):
+                                account_created_at = account.get('created_at').strftime("%b %d, %Y")
+                            else:
+                                account_created_at = str(account.get('created_at'))[:16]
+                        except:
+                            account_created_at = "N/A"
+
+                    escalation_id = create_escalation(
+                        user_id,
+                        f"URGENT: User requested PERMANENT card cancellation - {card_type} - Account {account_number}",
+                        {
+                            "account_id": account_id,
+                            "account_number": account_number,
+                            "account_type": context['data']['account_type'],
+                            "card_type": card_type,
+                            "block_type": "permanent",
+                            "priority": "high",
+                            "requires_verification": True,
+                            "action_required": "Verify identity and permanently cancel card",
+                            "user_name": user_details.get('name', user_name),
+                            "user_email": user_details.get('email', 'N/A'),
+                            "phone_number": user_details.get('phone_number', 'Not Available'),
+                            "address": user_details.get('address', 'Not Available'),
+                            "customer_id": str(user_details.get('customer_id', user_id)),
+                            "account_created_at": account_created_at,
+                            "kyc_status": user_details.get('kyc_status', 'Unknown'),
+                            "customer_tier": user_details.get('customer_tier', 'Unknown'),
+                            "date_of_birth": user_details.get('date_of_birth', 'Not Available')
+                        }
+                    )
+
+                    bot_msg = (
+                        f"⚠️ **PERMANENT CARD CANCELLATION REQUEST**\n\n"
+                        f"**IMPORTANT - This action requires agent verification:**\n\n"
+                        f"**Temporary vs Permanent:**\n"
+                        f"🔄 **Temporary Block:**\n"
+                        f"   • YOU can unblock anytime\n"
+                        f"   • Same card number\n"
+                        f"   • Instant process\n\n"
+                        f"🚫 **Permanent Cancellation:**\n"
+                        f"   • Card is DESTROYED\n"
+                        f"   • Cannot be unblocked EVER\n"
+                        f"   • New card with NEW number needed\n"
+                        f"   • Requires agent verification\n"
+                        f"   • Takes 7-10 business days for new card\n\n"
+                        f"**Why agent verification?**\n"
+                        f"Security protection - prevents unauthorized cancellation\n\n"
+                        f"Case ID: {escalation_id[:12]} (Priority: HIGH)\n\n"
+                        f"👉 Click 'Talk to Human Agent' button above NOW.\n"
+                        f"An agent will verify your identity and complete the cancellation."
+                    )
+
+                    clear_user_context(user_id)
+                    save_message(user_id, user_msg, bot_msg)
+                    invalidate_cache(user_id)
+                    return {
+                        "reply": bot_msg,
+                        "escalation_id": escalation_id,
+                        "escalated": True
+                    }
+                
+                elif user_msg.strip() == "3":
+                    escalation_id = create_escalation(
+                        user_id,
+                        f"User requested agent help for {card_type} blocking - Account {account_number}",
+                        {
+                            "account_id": account_id,
+                            "account_number": account_number,
+                            "account_type": context['data']['account_type'],
+                            "card_type": card_type
+                        }
+                    )
+                    
+                    bot_msg = (
+                        f"I've connected you with a support agent.\n\n"
+                        f"They can help you with:\n"
+                        f"• Card blocking questions\n"
+                        f"• Report lost/stolen card\n"
+                        f"• Dispute transactions\n"
+                        f"• Order new card\n\n"
+                        f"Case ID: {escalation_id[:12]}\n\n"
+                        f"👉 Click 'Talk to Human Agent' button above."
+                    )
+                    
+                    clear_user_context(user_id)
+                    save_message(user_id, user_msg, bot_msg)
+                    invalidate_cache(user_id)
+                    return {
+                        "reply": bot_msg,
+                        "escalation_id": escalation_id,
+                        "escalated": True
+                    }
+
+        # --- Handle Card Unblock Selection ---
+        elif context["type"] == "card_unblock_selection":
+            try:
+                accounts = context['data']['accounts']
+                idx = parse_selection_number(user_msg, len(accounts))
+                
+                if idx is not None and idx < len(accounts):
+                    from bson import ObjectId
+                    account_id = accounts[idx]
+                    
+                    success, message = unblock_card(account_id)
+                    
+                    if success:
+                        account = accounts_col.find_one({"_id": ObjectId(account_id)})
+                        bot_msg = (
+                            f"✅ **CARD UNBLOCKED**\n\n"
+                            f"Your {account.get('account_type')} card (Account: {account.get('account_number')}) "
+                            f"is now ACTIVE.\n\n"
+                            f"You can now:\n"
+                            f"✅ Make purchases\n"
+                            f"✅ Withdraw cash from ATMs\n"
+                            f"✅ Use online transactions\n\n"
+                            f"Stay safe! If you didn't request this, contact us immediately."
+                        )
+                    else:
+                        bot_msg = f"Failed to unblock card: {message}"
+                    
+                    clear_user_context(user_id)
+                    save_message(user_id, user_msg, bot_msg)
+                    invalidate_cache(user_id)
+                    return bot_msg
+            except Exception as e:
+                print(f"Error unblocking card: {e}")
+                traceback.print_exc()
+
+    # ==================== INTENT CLASSIFICATION ====================
+    # Only classify intent if it's not a numeric selection
     
-    # Classify intent (uses history, which is why cache invalidation is important)
     intent = classify_user_intent(user_msg, history, user_name)
     
-    # ==================== CONTEXT-SPECIFIC FLOWS ====================
+    # ==================== CONTEXT-SPECIFIC (Non-numeric) FLOWS ====================
     
-    # Handle card block account selection (ONLY if explicitly in card block flow)
-    if context and context["type"] == "card_block_account_selection":
-        try:
-            user_info_data = get_user_by_id(user_id)
-            customer = customers_col.find_one({"email": user_info_data.get('email')})
-            
-            if customer:
-                all_accounts = list(accounts_col.find({"customer_id": customer["_id"]}))
-                card_accounts = [
-                    acc for acc in all_accounts 
-                    if acc.get('account_type') in ['Credit Card', 'Savings', 'Checking']
-                ]
-                
-                idx = parse_selection_number(user_msg, len(card_accounts))
-                if idx is not None and idx < len(card_accounts):
-                    account = card_accounts[idx]
-                    account_id = str(account['_id'])
-                    account_number = account.get('account_number', 'N/A')
-                    account_type = account.get('account_type', 'Account')
-                    
-                    if account_type == 'Credit Card':
-                        card_type = "Credit Card"
-                    elif account_type in ['Savings', 'Checking']:
-                        card_type = "Debit Card"
-                    else:
-                        card_type = "Card"
-                    
-                    set_user_context(user_id, "card_block_pending", {
-                        "account_id": account_id,
-                        "account_number": account_number,
-                        "account_type": account_type,
-                        "card_type": card_type
-                    })
-                    
-                    bot_msg = (
-                        f"You selected: {card_type} (Account: {account_number})\n\n"
-                        f"Please choose:\n"
-                        f"1️⃣ Temporary Block (you can unblock later)\n"
-                        f"2️⃣ Permanent Block (card will be cancelled)\n"
-                        f"3️⃣ Talk to Support Agent\n\n"
-                        f"Reply with 1, 2, or 3."
-                    )
-                    save_message(user_id, user_msg, bot_msg)
-                    invalidate_cache(user_id) # <-- ✅ FIX: Invalidate history cache
-                    return bot_msg
-        except Exception as e:
-            print(f"Error in card block selection: {e}")
-            traceback.print_exc()
+    # Handle card block confirmation (e.g., user types "temporary")
+    if context and context["type"] == "card_block_pending":
+        if user_msg.lower().strip() in ["temporary", "permanent", "agent"]:
+            # This logic is complex, so we'll just map to the numeric equivalent and re-run
+            mapped_msg = user_msg.lower().strip()
+            if mapped_msg == "temporary":
+                return get_bot_reply(user_id, "1", current_user_role, retry_count)
+            elif mapped_msg == "permanent":
+                return get_bot_reply(user_id, "2", current_user_role, retry_count)
+            elif mapped_msg == "agent":
+                return get_bot_reply(user_id, "3", current_user_role, retry_count)
 
-    # Handle card block confirmation
-    elif context and context["type"] == "card_block_pending":
-        if user_msg.strip() in ["1", "2", "3", "temporary", "permanent", "agent"]:
-            card_type = context['data'].get('card_type', 'Card')
-            account_number = context['data']['account_number']
-            account_id = context['data']['account_id']
-            
-            if user_msg.strip() in ["1", "temporary"]:
-                from .database import block_card_temporary
-                
-                success, message = block_card_temporary(account_id)
-                
-                if success:
-                    bot_msg = (
-                        f"🔒 **CARD TEMPORARILY BLOCKED**\n\n"
-                        f"Your {card_type} (Account: {account_number}) is now blocked.\n\n"
-                        f"**What this means:**\n"
-                        f"❌ Cannot make purchases or withdrawals\n"
-                        f"❌ ATM transactions disabled\n"
-                        f"✅ Account balance is SAFE\n"
-                        f"✅ You can still receive deposits\n"
-                        f"✅ Can be unblocked anytime by YOU\n\n"
-                        f"**To unblock:**\n"
-                        f"• Tell me 'unblock my card'\n"
-                        f"• Use mobile app\n"
-                        f"• Call: 1-800-BANK-HELP\n"
-                        f"• Visit any branch\n\n"
-                        f"Is there anything else I can help you with?"
-                    )
-                else:
-                    bot_msg = f"Sorry, I couldn't block the card. Error: {message}\n\nPlease try again or contact support."
-                
-                clear_user_context(user_id)
-                save_message(user_id, user_msg, bot_msg)
-                invalidate_cache(user_id) # <-- ✅ FIX: Invalidate history cache
-                return bot_msg
-            
-            elif user_msg.strip() in ["2", "permanent"]:
-                # ✅ Get full account and customer details for verification
-                from bson import ObjectId
-                from .database import get_customer_by_user_id
-
-                # Get account details
-                account = accounts_col.find_one({"_id": ObjectId(account_id)})
-
-                # Get customer verification details
-                user_details = get_customer_by_user_id(user_id)
-                if not user_details:
-                    user_details = user_info  # Fallback to basic user info
-
-                # Format account creation date
-                account_created_at = "N/A"
-                if account and account.get('created_at'):
-                    try:
-                        if isinstance(account.get('created_at'), datetime):
-                            account_created_at = account.get('created_at').strftime("%b %d, %Y")
-                        else:
-                            account_created_at = str(account.get('created_at'))[:16]
-                    except:
-                        account_created_at = "N/A"
-
-                # Create escalation with full verification details
-                escalation_id = create_escalation(
-                    user_id,
-                    f"URGENT: User requested PERMANENT card cancellation - {card_type} - Account {account_number}",
-                    {
-                        "account_id": account_id,
-                        "account_number": account_number,
-                        "account_type": context['data']['account_type'],
-                        "card_type": card_type,
-                        "block_type": "permanent",
-                        "priority": "high",
-                        "requires_verification": True,
-                        "action_required": "Verify identity and permanently cancel card",
-                        # ✅ CUSTOMER VERIFICATION DETAILS
-                        "user_name": user_details.get('name', user_name),
-                        "user_email": user_details.get('email', 'N/A'),
-                        "phone_number": user_details.get('phone_number', 'Not Available'),
-                        "address": user_details.get('address', 'Not Available'),
-                        "customer_id": str(user_details.get('_id', user_id)), # Use customer _id
-                        "account_created_at": account_created_at,
-                        # Additional verification info (if available)
-                        "kyc_status": user_details.get('kyc_status', 'Unknown'),
-                        "customer_tier": user_details.get('customer_tier', 'Unknown'),
-                        "date_of_birth": user_details.get('date_of_birth', 'Not Available')
-                    }
-                )
-
-                bot_msg = (
-                    f"⚠️ **PERMANENT CARD CANCELLATION REQUEST**\n\n"
-                    f"**IMPORTANT - This action requires agent verification:**\n\n"
-                    f"**Temporary vs Permanent:**\n"
-                    f"🔄 **Temporary Block:**\n"
-                    f"    • YOU can unblock anytime\n"
-                    f"    • Same card number\n"
-                    f"    • Instant process\n\n"
-                    f"🚫 **Permanent Cancellation:**\n"
-                    f"    • Card is DESTROYED\n"
-                    f"    • Cannot be unblocked EVER\n"
-                    f"    • New card with NEW number needed\n"
-                    f"    • Requires agent verification\n"
-                    f"    • Takes 7-10 business days for new card\n\n"
-                    f"**Why agent verification?**\n"
-                    f"Security protection - prevents unauthorized cancellation\n\n"
-                    f"Case ID: {escalation_id[:12]} (Priority: HIGH)\n\n"
-                    f"👉 Click 'Talk to Human Agent' button above NOW.\n"
-                    f"An agent will verify your identity and complete the cancellation."
-                )
-
-                clear_user_context(user_id)
-                save_message(user_id, user_msg, bot_msg)
-                invalidate_cache(user_id) # <-- ✅ FIX: Invalidate history cache
-                return {
-                    "reply": bot_msg,
-                    "escalation_id": escalation_id,
-                    "escalated": True
-                }
-            
-            elif user_msg.strip() in ["3", "agent"]:
-                escalation_id = create_escalation(
-                    user_id,
-                    f"User requested agent help for {card_type} blocking - Account {account_number}",
-                    {
-                        "account_id": account_id,
-                        "account_number": account_number,
-                        "account_type": context['data']['account_type'],
-                        "card_type": card_type
-                    }
-                )
-                
-                bot_msg = (
-                    f"I've connected you with a support agent.\n\n"
-                    f"They can help you with:\n"
-                    f"• Card blocking questions\n"
-                    f"• Report lost/stolen card\n"
-                    f"• Dispute transactions\n"
-                    f"• Order new card\n\n"
-                    f"Case ID: {escalation_id[:12]}\n\n"
-                    f"👉 Click 'Talk to Human Agent' button above."
-                )
-                
-                clear_user_context(user_id)
-                save_message(user_id, user_msg, bot_msg)
-                invalidate_cache(user_id) # <-- ✅ FIX: Invalidate history cache
-                return {
-                    "reply": bot_msg,
-                    "escalation_id": escalation_id,
-                    "escalated": True
-                }
-
-    # Handle card unblock selection
-    elif context and context["type"] == "card_unblock_selection":
-        try:
-            accounts = context['data']['accounts']
-            idx = parse_selection_number(user_msg, len(accounts))
-            
-            if idx is not None and idx < len(accounts):
-                from .database import unblock_card
-                from bson import ObjectId
-                account_id = accounts[idx]
-                
-                success, message = unblock_card(account_id)
-                
-                if success:
-                    account = accounts_col.find_one({"_id": ObjectId(account_id)})
-                    bot_msg = (
-                        f"✅ **CARD UNBLOCKED**\n\n"
-                        f"Your {account.get('account_type')} card (Account: {account.get('account_number')}) "
-                        f"is now ACTIVE.\n\n"
-                        f"You can now:\n"
-                        f"✅ Make purchases\n"
-                        f"✅ Withdraw cash from ATMs\n"
-                        f"✅ Use online transactions\n\n"
-                        f"Stay safe! If you didn't request this, contact us immediately."
-                    )
-                else:
-                    bot_msg = f"Failed to unblock card: {message}"
-                
-                clear_user_context(user_id)
-                save_message(user_id, user_msg, bot_msg)
-                invalidate_cache(user_id) # <-- ✅ FIX: Invalidate history cache
-                return bot_msg
-        except Exception as e:
-            print(f"Error unblocking card: {e}")
-            traceback.print_exc()
 
     # ==================== INTENT-BASED FLOWS ====================
     
     if intent == "CARD_UNBLOCK":
         try:
-            from .database import unblock_card
             from bson import ObjectId
             user_info_data = get_user_by_id(user_id)
             customer = customers_col.find_one({"email": user_info_data.get('email')})
@@ -3079,7 +3048,8 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
                     return {
                         "reply": "ACCOUNT_LIST",
                         "accounts": card_accounts,
-                        "action": "card_block"
+                        "action": "card_block",
+                        "prompt": bot_msg # Send the prompt to the frontend
                     }
                 else:
                     bot_msg = (
@@ -3150,7 +3120,8 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
                 invalidate_cache(user_id)
                 return {
                     "reply": "ACCOUNT_LIST",
-                    "accounts": accounts_data
+                    "accounts": accounts_data,
+                    "prompt": "Here are your accounts. You can select one to see more details."
                 }
         except Exception as e:
             print(f"Account balance error: {e}")
@@ -3159,96 +3130,65 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
             invalidate_cache(user_id)
             return bot_msg
     
+    # ✅ FIX: This handler is now simplified because the numeric logic is in the PRIORITY block
     elif intent == "ACCOUNT_SELECTION" or intent == "ACCOUNT_DETAILS":
-        # Check if user is in account balance selection context
-        if context and context["type"] == "account_balance_selection":
-            try:
-                from bson import ObjectId
-                
-                user_info_data = get_user_by_id(user_id)
-                customer = customers_col.find_one({"email": user_info_data.get('email')})
-                
-                if not customer:
-                    bot_msg = "Customer profile not found."
-                    save_message(user_id, user_msg, bot_msg)
-                    invalidate_cache(user_id)
-                    return bot_msg
-                
-                accounts = list(accounts_col.find({"customer_id": customer["_id"]}))
-                if not accounts:
-                    bot_msg = "You don't have any accounts."
-                    save_message(user_id, user_msg, bot_msg)
-                    invalidate_cache(user_id)
-                    return bot_msg
-                
-                idx = parse_selection_number(user_msg, len(accounts))
-                if idx is not None and idx < len(accounts):
-                    account_id = str(accounts[idx]['_id'])
-                    bot_msg = get_specific_account_details(account_id, user_id)
-                    # DON'T clear context - keep it for follow-up actions
-                    save_message(user_id, user_msg, bot_msg)
-                    invalidate_cache(user_id)
-                    return bot_msg
-                
-                bot_msg = "Which account would you like to see the details for? You can tell me the number (like '1' or 'the first one') or the type (like 'Savings')."
-                save_message(user_id, user_msg, bot_msg)
-                invalidate_cache(user_id)
-                return bot_msg
-                
-            except Exception as e:
-                print(f"Account selection error: {e}")
-                traceback.print_exc()
-                bot_msg = "I had trouble processing your selection."
-                save_message(user_id, user_msg, bot_msg)
-                invalidate_cache(user_id)
-                return bot_msg
-        else:
-            # User wants account details but hasn't selected from list yet
-            bot_msg = "Which account would you like to see details for? Please ask to check your account balance first to see all your accounts."
-            save_message(user_id, user_msg, bot_msg)
-            invalidate_cache(user_id)
-            return bot_msg
+        # This intent is now only for *initiating* selection, not *performing* it
+        bot_msg = "Which account would you like to see? Let me show you your account list first."
+        save_message(user_id, user_msg, bot_msg)
+        invalidate_cache(user_id)
+        # Re-run the logic as if the user asked for their balance
+        return get_bot_reply(user_id, "check account balance", current_user_role, retry_count)
     
     elif intent == "TRANSACTION_HISTORY":
-        # ✅ This logic is now fixed because `get_user_context`
-        # will correctly retrieve the context from the database.
-        
-        # Check if user already has a selected account in context
-        if context and context["type"] in ["selected_account"]:
+        # ✅ FIX: Check for 'selected_account' (follow-up) OR 'account_balance_selection' (just saw list)
+        if context and context["type"] in ["selected_account", "account_balance_selection"]:
             # User already selected an account earlier, use it directly
-            account_id = context["data"]["account_id"]
-            bot_msg = get_transaction_history(account_id, user_id)
+            # If context is 'account_balance_selection', the data isn't set.
+            # But 'selected_account' WILL be set.
+            if context["type"] == "selected_account":
+                account_id = context["data"]["account_id"]
+                bot_msg = get_transaction_history(account_id, user_id)
+                save_message(user_id, user_msg, bot_msg)
+                invalidate_cache(user_id)
+                return bot_msg
+            else:
+                # User was just looking at balance, now wants history.
+                # We need to ask them *which* account for history.
+                pass # Fall through to the 'else' block
+        
+        # No account selected yet - show account cards for first-time selection
+        bot_msg = (
+            "I can show you transaction history! First, let me show you your accounts.\n\n"
+            "Which account would you like to view transactions for?"
+        )
+        
+        # Automatically fetch and show accounts as cards
+        try:
+            accounts_data, msg = get_account_list(user_id)
+            
+            if accounts_data is None:
+                save_message(user_id, user_msg, msg)
+                invalidate_cache(user_id)
+                return msg
+            else:
+                # Set context specifically for transaction history selection
+                set_user_context(user_id, "transaction_history_selection", {
+                    "action": "view_transactions"
+                })
+                
+                save_message(user_id, user_msg, "Displaying accounts for transaction history")
+                invalidate_cache(user_id)
+                return {
+                    "reply": "ACCOUNT_LIST",
+                    "accounts": accounts_data,
+                    "prompt": bot_msg # Send the prompt to the frontend
+                }
+        except Exception as e:
+            print(f"Error fetching accounts for transaction history: {e}")
+            bot_msg = "Please check your account balance first, then I can show you transaction history for a specific account."
             save_message(user_id, user_msg, bot_msg)
             invalidate_cache(user_id)
             return bot_msg
-        else:
-            # No account selected yet - show account cards for first-time selection
-            bot_msg = (
-                "I can show you transaction history! First, let me show you your accounts.\n\n"
-                "Which account would you like to view transactions for?"
-            )
-            save_message(user_id, user_msg, bot_msg)
-            invalidate_cache(user_id)
-            
-            # Automatically fetch and show accounts as cards
-            try:
-                accounts_data, msg = get_account_list(user_id)
-                
-                if accounts_data is None:
-                    return msg
-                else:
-                    # Set context specifically for transaction history selection
-                    set_user_context(user_id, "transaction_history_selection", {
-                        "action": "view_transactions"
-                    })
-                    
-                    return {
-                        "reply": "ACCOUNT_LIST",
-                        "accounts": accounts_data
-                    }
-            except Exception as e:
-                print(f"Error fetching accounts for transaction history: {e}")
-                return "Please check your account balance first, then I can show you transaction history for a specific account."
     
     # Fallback to AI
     try:
