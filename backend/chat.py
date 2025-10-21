@@ -2148,9 +2148,6 @@
 
 
 
-
-
-
 import time
 import re
 import traceback
@@ -2162,9 +2159,9 @@ from .config import db, model
 from .escalation import should_escalate, create_escalation
 from .faq_context import get_faq_context
 
-# In-memory session cache with context tracking
-session_cache = {}
-user_context = {}  # Track user's current context
+# In-memory session cache (This has the same problem, but we'll fix context first)
+session_cache = {} 
+# user_context = {}  # <-- THIS WAS THE PROBLEM. It's not shared between server workers.
 CACHE_DURATION = timedelta(minutes=15)
 CONTEXT_DURATION = timedelta(minutes=10)
 
@@ -2173,41 +2170,71 @@ chat_sessions_collection = db["chat_sessions"] if db is not None else None
 accounts_col = db["accounts"] if db is not None else None
 transactions_col = db["transactions"] if db is not None else None
 customers_col = db["customers"] if db is not None else None
+# ✅ FIX: Add a new collection for shared user context
+user_context_col = db["user_contexts"] if db is not None else None
 
 
-# ==================== CONTEXT MANAGEMENT ====================
+# ==================== CONTEXT MANAGEMENT (DATABASE-BACKED) ====================
 
 def set_user_context(user_id, context_type, context_data):
-    """Store user's current context (e.g., selected account)"""
-    print(f"DEBUG: [Context SET] User: {user_id} -> Type: {context_type}") # DEBUG
-    user_context[user_id] = {
+    """Store user's current context (e.g., selected account) in MongoDB"""
+    if user_context_col is None:
+        print("ERROR: user_context_col is not available")
+        return
+
+    print(f"DEBUG: [Context SET] User: {user_id} -> Type: {context_type}")
+    
+    context_doc = {
         "type": context_type,
         "data": context_data,
         "timestamp": datetime.now(timezone.utc)
     }
+    
+    # Use update_one with upsert=True to create or replace the context document
+    user_context_col.update_one(
+        {"user_id": user_id},
+        {"$set": context_doc},
+        upsert=True
+    )
 
 
 def get_user_context(user_id):
-    """Retrieve user's current context if not expired"""
-    if user_id not in user_context:
-        print("DEBUG: [Context GET] User: {user_id} -> NOT FOUND") # DEBUG
+    """Retrieve user's current context if not expired from MongoDB"""
+    if user_context_col is None:
+        print("ERROR: user_context_col is not available")
+        return None
+
+    # Find the user's context document in the database
+    context_doc = user_context_col.find_one({"user_id": user_id})
+
+    if not context_doc:
+        print(f"DEBUG: [Context GET] User: {user_id} -> NOT FOUND in DB")
         return None
     
-    context = user_context[user_id]
+    context = context_doc
+    # Check if the context has expired
     if datetime.now(timezone.utc) - context["timestamp"] > CONTEXT_DURATION:
-        print(f"DEBUG: [Context EXPIRED] User: {user_id} -> Type: {context['type']}") # DEBUG
-        del user_context[user_id]
+        print(f"DEBUG: [Context EXPIRED] User: {user_id} -> Type: {context['type']}")
+        # Delete the expired context
+        user_context_col.delete_one({"user_id": user_id})
         return None
     
-    print(f"DEBUG: [Context GET] User: {user_id} -> Type: {context['type']}") # DEBUG
+    print(f"DEBUG: [Context GET] User: {user_id} -> Type: {context['type']} (from DB)")
     return context
 
 
 def clear_user_context(user_id):
-    """Clear user's context"""
-    if user_id in user_context:
-        print(f"DEBUG: [Context CLEAR] User: {user_id} -> Type: {user_context[user_id]['type']}") # DEBUG
-        del user_context[user_id]
+    """Clear user's context from MongoDB"""
+    if user_context_col is None:
+        print("ERROR: user_context_col is not available")
+        return
+
+    # Delete the context document from the database
+    result = user_context_col.delete_one({"user_id": user_id})
+    if result.deleted_count > 0:
+        print(f"DEBUG: [Context CLEAR] User: {user_id} (from DB)")
+    else:
+        print(f"DEBUG: [Context CLEAR] User: {user_id} -> (already clear in DB)")
 
 
 # ==================== TRANSACTION HISTORY ====================
@@ -2295,6 +2322,8 @@ def get_transaction_history(account_id, user_id):
 
 def get_cached_history(user_id, limit=30):
     """Retrieve recent conversation history from cache or database."""
+    # Note: This in-memory cache will also have problems in production.
+    # For a real fix, this should also use Redis or another shared cache.
     now = datetime.now(timezone.utc)
     if user_id in session_cache:
         cached_data, timestamp = session_cache[user_id]
@@ -2598,7 +2627,7 @@ Opened On: {created_date}
             outstanding = account.get('balance', 0)
             interest_rate = account.get('interest_rate', 0)
             emi = account.get('emi_amount', 0)
-            next_due = account.get('next_emi_due').strftime("%b %d, %Y") if account.get('next_emi_due') else "N/A"
+            next_due = account.get('next_emi_due').strftime("%b %d, %Y") if acc.get('next_emi_due') else "N/A"
             
             response += f"Principal: {currency} {principal:,.2f}\n"
             response += f"Outstanding: {currency} {outstanding:,.2f}\n"
@@ -2633,13 +2662,12 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
     context = get_user_context(user_id)
     
     # ==================== PRIORITY: Handle numeric selections in context ====================
-    # ✅ FIX: This block now handles ALL numeric selection contexts to avoid confusion
     if context and user_msg.strip().isdigit():
-        print(f"DEBUG: PRIORITY HANDLER Active. Context: {context['type']}, Msg: '{user_msg}'") # DEBUG
+        print(f"DEBUG: PRIORITY HANDLER Active. Context: {context['type']}, Msg: '{user_msg}'")
         
         # --- Handle Account Balance Selection ---
         if context["type"] == "account_balance_selection":
-            print("DEBUG: PRIORITY HANDLER -> account_balance_selection") # DEBUG
+            print("DEBUG: PRIORITY HANDLER -> account_balance_selection")
             try:
                 from bson import ObjectId
                 user_info_data = get_user_by_id(user_id)
@@ -2657,14 +2685,14 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
                         invalidate_cache(user_id)
                         return bot_msg
                     else:
-                        print("DEBUG: PRIORITY HANDLER -> account_balance_selection -> FAILED (idx out of range)") # DEBUG
+                        print("DEBUG: PRIORITY HANDLER -> account_balance_selection -> FAILED (idx out of range)")
             except Exception as e:
                 print(f"Error handling account selection: {e}")
                 traceback.print_exc()
         
         # --- Handle Transaction History Selection ---
         elif context["type"] == "transaction_history_selection":
-            print("DEBUG: PRIORITY HANDLER -> transaction_history_selection") # DEBUG
+            print("DEBUG: PRIORITY HANDLER -> transaction_history_selection")
             try:
                 from bson import ObjectId
                 user_info_data = get_user_by_id(user_id)
@@ -2694,7 +2722,7 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
 
         # --- Handle Card Block Account Selection ---
         elif context["type"] == "card_block_account_selection":
-            print("DEBUG: PRIORITY HANDLER -> card_block_account_selection") # DEBUG
+            print("DEBUG: PRIORITY HANDLER -> card_block_account_selection")
             try:
                 user_info_data = get_user_by_id(user_id)
                 customer = customers_col.find_one({"email": user_info_data.get('email')})
@@ -2744,7 +2772,7 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
 
         # --- Handle Card Block Confirmation (1, 2, or 3) ---
         elif context["type"] == "card_block_pending":
-            print("DEBUG: PRIORITY HANDLER -> card_block_pending") # DEBUG
+            print("DEBUG: PRIORITY HANDLER -> card_block_pending")
             if user_msg.strip() in ["1", "2", "3"]:
                 card_type = context['data'].get('card_type', 'Card')
                 account_number = context['data']['account_number']
@@ -2883,7 +2911,7 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
 
         # --- Handle Card Unblock Selection ---
         elif context["type"] == "card_unblock_selection":
-            print("DEBUG: PRIORITY HANDLER -> card_unblock_selection") # DEBUG
+            print("DEBUG: PRIORITY HANDLER -> card_unblock_selection")
             try:
                 accounts = context['data']['accounts']
                 idx = parse_selection_number(user_msg, len(accounts))
@@ -2918,7 +2946,7 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
                 traceback.print_exc()
 
     else:
-         print(f"DEBUG: PRIORITY HANDLER -> SKIPPED. Context: {context}, IsDigit: {user_msg.strip().isdigit()}") # DEBUG
+         print(f"DEBUG: PRIORITY HANDLER -> SKIPPED. Context: {context}, IsDigit: {user_msg.strip().isdigit()}")
          
     # ==================== INTENT CLASSIFICATION ====================
     # Only classify intent if it's not a numeric selection
@@ -3148,10 +3176,9 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
             invalidate_cache(user_id)
             return bot_msg
     
-    # ✅ FIX: This handler is now simplified because the numeric logic is in the PRIORITY block
     elif intent == "ACCOUNT_SELECTION" or intent == "ACCOUNT_DETAILS":
         # This intent is now only for *initiating* selection, not *performing* it
-        print("DEBUG: INTENT HANDLER -> ACCOUNT_SELECTION") # DEBUG
+        print("DEBUG: INTENT HANDLER -> ACCOUNT_SELECTION")
         bot_msg = "Which account would you like to see? Let me show you your account list first."
         save_message(user_id, user_msg, bot_msg)
         invalidate_cache(user_id)
@@ -3159,12 +3186,10 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
         return get_bot_reply(user_id, "check account balance", current_user_role, retry_count)
     
     elif intent == "TRANSACTION_HISTORY":
-        print("DEBUG: INTENT HANDLER -> TRANSACTION_HISTORY") # DEBUG
-        # ✅ FIX: Check for 'selected_account' (follow-up) OR 'account_balance_selection' (just saw list)
+        print("DEBUG: INTENT HANDLER -> TRANSACTION_HISTORY")
         if context and context["type"] in ["selected_account", "account_balance_selection"]:
-            print(f"DEBUG: INTENT HANDLER -> TRANSACTION_HISTORY -> Context found: {context['type']}") # DEBUG
+            print(f"DEBUG: INTENT HANDLER -> TRANSACTION_HISTORY -> Context found: {context['type']}")
             
-            # User already selected an account earlier, use it directly
             if context["type"] == "selected_account":
                 account_id = context["data"]["account_id"]
                 bot_msg = get_transaction_history(account_id, user_id)
@@ -3172,18 +3197,14 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
                 invalidate_cache(user_id)
                 return bot_msg
             else:
-                # User was just looking at balance, now wants history.
-                # We need to ask them *which* account for history.
-                pass # Fall through to the 'else' block
+                pass # Fall through
         
-        # No account selected yet - show account cards for first-time selection
-        print("DEBUG: INTENT HANDLER -> TRANSACTION_HISTORY -> No context, showing list") # DEBUG
+        print("DEBUG: INTENT HANDLER -> TRANSACTION_HISTORY -> No context, showing list")
         bot_msg = (
             "I can show you transaction history! First, let me show you your accounts.\n\n"
             "Which account would you like to view transactions for?"
         )
         
-        # Automatically fetch and show accounts as cards
         try:
             accounts_data, msg = get_account_list(user_id)
             
@@ -3192,7 +3213,6 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
                 invalidate_cache(user_id)
                 return msg
             else:
-                # Set context specifically for transaction history selection
                 set_user_context(user_id, "transaction_history_selection", {
                     "action": "view_transactions"
                 })
@@ -3202,7 +3222,7 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
                 return {
                     "reply": "ACCOUNT_LIST",
                     "accounts": accounts_data,
-                    "prompt": bot_msg # Send the prompt to the frontend
+                    "prompt": bot_msg 
                 }
         except Exception as e:
             print(f"Error fetching accounts for transaction history: {e}")
@@ -3212,7 +3232,7 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
             return bot_msg
     
     # Fallback to AI
-    print("DEBUG: FALLBACK TO AI") # DEBUG
+    print("DEBUG: FALLBACK TO AI")
     try:
         faq_knowledge = get_faq_context()
         
