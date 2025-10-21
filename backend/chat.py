@@ -2151,7 +2151,6 @@
 
 
 
-
 import time
 import re
 import traceback
@@ -2180,7 +2179,7 @@ customers_col = db["customers"] if db is not None else None
 
 def set_user_context(user_id, context_type, context_data):
     """Store user's current context (e.g., selected account)"""
-    print(f"[Context SET] User: {user_id} -> Type: {context_type}")
+    print(f"DEBUG: [Context SET] User: {user_id} -> Type: {context_type}") # DEBUG
     user_context[user_id] = {
         "type": context_type,
         "data": context_data,
@@ -2191,22 +2190,23 @@ def set_user_context(user_id, context_type, context_data):
 def get_user_context(user_id):
     """Retrieve user's current context if not expired"""
     if user_id not in user_context:
+        print("DEBUG: [Context GET] User: {user_id} -> NOT FOUND") # DEBUG
         return None
     
     context = user_context[user_id]
     if datetime.now(timezone.utc) - context["timestamp"] > CONTEXT_DURATION:
-        print(f"[Context EXPIRED] User: {user_id} -> Type: {context['type']}")
+        print(f"DEBUG: [Context EXPIRED] User: {user_id} -> Type: {context['type']}") # DEBUG
         del user_context[user_id]
         return None
     
-    # print(f"[Context GET] User: {user_id} -> Type: {context['type']}")
+    print(f"DEBUG: [Context GET] User: {user_id} -> Type: {context['type']}") # DEBUG
     return context
 
 
 def clear_user_context(user_id):
     """Clear user's context"""
     if user_id in user_context:
-        print(f"[Context CLEAR] User: {user_id} -> Type: {user_context[user_id]['type']}")
+        print(f"DEBUG: [Context CLEAR] User: {user_id} -> Type: {user_context[user_id]['type']}") # DEBUG
         del user_context[user_id]
 
 
@@ -2375,6 +2375,7 @@ def classify_user_intent(user_msg, history, user_name="there"):
     # Check for UNBLOCK keywords FIRST (before block keywords)
     unblock_keywords = ['unblock', 'unlock', 'enable card', 'activate card', 'unfreeze', 'reactivate']
     if any(keyword in msg_lower for keyword in unblock_keywords):
+        print(f"[Intent] '{user_msg[:40]}...' -> CARD_UNBLOCK (Keyword)")
         return "CARD_UNBLOCK"
     
     # Check for card blocking keywords (after unblock check)
@@ -2386,32 +2387,38 @@ def classify_user_intent(user_msg, history, user_name="there"):
         ('block' in msg_lower or 'freeze' in msg_lower or 'lost' in msg_lower or 'stolen' in msg_lower) 
         and 'unblock' not in msg_lower
     ):
+        print(f"[Intent] '{user_msg[:40]}...' -> CARD_BLOCK (Keyword)")
         return "CARD_BLOCK"
     
     # Check for escalation/agent keywords
     agent_keywords = ['agent', 'human', 'representative', 'support agent', 'talk to someone',
                       'speak to', 'customer service', 'help me', 'need help', 'supervisor']
     if any(keyword in msg_lower for keyword in agent_keywords):
+        print(f"[Intent] '{user_msg[:40]}...' -> ESCALATE_TO_AGENT (Keyword)")
         return "ESCALATE_TO_AGENT"
     
     # Check for transaction-related keywords
     transaction_keywords = ['transaction', 'history', 'statement', 'transactions', 'purchases', 'payments']
     if any(keyword in msg_lower for keyword in transaction_keywords):
+        print(f"[Intent] '{user_msg[:40]}...' -> TRANSACTION_HISTORY (Keyword)")
         return "TRANSACTION_HISTORY"
 
     # Check for account-related keywords
     account_keywords = ['balance', 'account', 'accounts', 'money', 'savings', 'checking']
     if any(keyword in msg_lower for keyword in account_keywords):
+        print(f"[Intent] '{user_msg[:40]}...' -> ACCOUNT_BALANCE (Keyword)")
         return "ACCOUNT_BALANCE" # Default to balance check
     
     if '?' in user_msg:
         pass
     elif len(msg_words) <= 3:
         if msg_lower in goodbye_exact:
+            print(f"[Intent] '{user_msg[:40]}...' -> CONVERSATION_END (Keyword)")
             return "CONVERSATION_END"
     elif len(msg_words) <= 6:
         for phrase in goodbye_starts:
             if msg_lower.startswith(phrase):
+                print(f"[Intent] '{user_msg[:40]}...' -> CONVERSATION_END (Keyword)")
                 return "CONVERSATION_END"
     
     # === AI CLASSIFICATION FALLBACK ===
@@ -2446,11 +2453,11 @@ Respond with ONLY the category name in uppercase."""
     try:
         response = model.generate_content(classification_prompt)
         intent = response.text.strip().upper().replace(" ", "_")
-        print(f"[Intent] '{user_msg[:40]}...' -> {intent}")
+        print(f"[Intent] '{user_msg[:40]}...' -> {intent} (AI)")
         
         # ✅ FIX: If user just sends a number, classify it as ACCOUNT_SELECTION
         if user_msg.strip().isdigit() and intent != "CONVERSATION_END":
-            print(f"[Intent Override] '{user_msg}' -> ACCOUNT_SELECTION")
+            print(f"[Intent Override] '{user_msg}' -> ACCOUNT_SELECTION (Digit)")
             return "ACCOUNT_SELECTION"
             
         return intent
@@ -2628,9 +2635,11 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
     # ==================== PRIORITY: Handle numeric selections in context ====================
     # ✅ FIX: This block now handles ALL numeric selection contexts to avoid confusion
     if context and user_msg.strip().isdigit():
+        print(f"DEBUG: PRIORITY HANDLER Active. Context: {context['type']}, Msg: '{user_msg}'") # DEBUG
         
         # --- Handle Account Balance Selection ---
         if context["type"] == "account_balance_selection":
+            print("DEBUG: PRIORITY HANDLER -> account_balance_selection") # DEBUG
             try:
                 from bson import ObjectId
                 user_info_data = get_user_by_id(user_id)
@@ -2647,12 +2656,15 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
                         save_message(user_id, user_msg, bot_msg)
                         invalidate_cache(user_id)
                         return bot_msg
+                    else:
+                        print("DEBUG: PRIORITY HANDLER -> account_balance_selection -> FAILED (idx out of range)") # DEBUG
             except Exception as e:
                 print(f"Error handling account selection: {e}")
                 traceback.print_exc()
         
         # --- Handle Transaction History Selection ---
         elif context["type"] == "transaction_history_selection":
+            print("DEBUG: PRIORITY HANDLER -> transaction_history_selection") # DEBUG
             try:
                 from bson import ObjectId
                 user_info_data = get_user_by_id(user_id)
@@ -2682,6 +2694,7 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
 
         # --- Handle Card Block Account Selection ---
         elif context["type"] == "card_block_account_selection":
+            print("DEBUG: PRIORITY HANDLER -> card_block_account_selection") # DEBUG
             try:
                 user_info_data = get_user_by_id(user_id)
                 customer = customers_col.find_one({"email": user_info_data.get('email')})
@@ -2731,6 +2744,7 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
 
         # --- Handle Card Block Confirmation (1, 2, or 3) ---
         elif context["type"] == "card_block_pending":
+            print("DEBUG: PRIORITY HANDLER -> card_block_pending") # DEBUG
             if user_msg.strip() in ["1", "2", "3"]:
                 card_type = context['data'].get('card_type', 'Card')
                 account_number = context['data']['account_number']
@@ -2869,6 +2883,7 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
 
         # --- Handle Card Unblock Selection ---
         elif context["type"] == "card_unblock_selection":
+            print("DEBUG: PRIORITY HANDLER -> card_unblock_selection") # DEBUG
             try:
                 accounts = context['data']['accounts']
                 idx = parse_selection_number(user_msg, len(accounts))
@@ -2902,6 +2917,9 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
                 print(f"Error unblocking card: {e}")
                 traceback.print_exc()
 
+    else:
+         print(f"DEBUG: PRIORITY HANDLER -> SKIPPED. Context: {context}, IsDigit: {user_msg.strip().isdigit()}") # DEBUG
+         
     # ==================== INTENT CLASSIFICATION ====================
     # Only classify intent if it's not a numeric selection
     
@@ -3133,6 +3151,7 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
     # ✅ FIX: This handler is now simplified because the numeric logic is in the PRIORITY block
     elif intent == "ACCOUNT_SELECTION" or intent == "ACCOUNT_DETAILS":
         # This intent is now only for *initiating* selection, not *performing* it
+        print("DEBUG: INTENT HANDLER -> ACCOUNT_SELECTION") # DEBUG
         bot_msg = "Which account would you like to see? Let me show you your account list first."
         save_message(user_id, user_msg, bot_msg)
         invalidate_cache(user_id)
@@ -3140,11 +3159,12 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
         return get_bot_reply(user_id, "check account balance", current_user_role, retry_count)
     
     elif intent == "TRANSACTION_HISTORY":
+        print("DEBUG: INTENT HANDLER -> TRANSACTION_HISTORY") # DEBUG
         # ✅ FIX: Check for 'selected_account' (follow-up) OR 'account_balance_selection' (just saw list)
         if context and context["type"] in ["selected_account", "account_balance_selection"]:
+            print(f"DEBUG: INTENT HANDLER -> TRANSACTION_HISTORY -> Context found: {context['type']}") # DEBUG
+            
             # User already selected an account earlier, use it directly
-            # If context is 'account_balance_selection', the data isn't set.
-            # But 'selected_account' WILL be set.
             if context["type"] == "selected_account":
                 account_id = context["data"]["account_id"]
                 bot_msg = get_transaction_history(account_id, user_id)
@@ -3157,6 +3177,7 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
                 pass # Fall through to the 'else' block
         
         # No account selected yet - show account cards for first-time selection
+        print("DEBUG: INTENT HANDLER -> TRANSACTION_HISTORY -> No context, showing list") # DEBUG
         bot_msg = (
             "I can show you transaction history! First, let me show you your accounts.\n\n"
             "Which account would you like to view transactions for?"
@@ -3191,6 +3212,7 @@ def get_bot_reply(user_id, user_msg, current_user_role="user", retry_count=0):
             return bot_msg
     
     # Fallback to AI
+    print("DEBUG: FALLBACK TO AI") # DEBUG
     try:
         faq_knowledge = get_faq_context()
         
